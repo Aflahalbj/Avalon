@@ -1,8 +1,8 @@
 # Maven build output
-/target/
+target/
 
 # VS Code
-/.vscode/
+.vscode/
 
 # Logs
 *.log
