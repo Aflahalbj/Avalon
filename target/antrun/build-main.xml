@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="maven-antrun-" default="main">
+  <target name="main">
+    <delete failonerror="false">
+      <fileset includes="Avalon-*.jar" dir="C:\ServerMC\plugins" />
+    </delete>
+    <copy file="C:\PROJECT\MINECRAFT\Avalon-plugin\avalon\target/Avalon-1.0-SNAPSHOT.jar" todir="C:\ServerMC\plugins" />
+  </target>
+</project>

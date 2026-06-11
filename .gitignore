@@ -1,0 +1,19 @@
+# Maven build output
+/target/
+
+# VS Code
+/.vscode/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Crash reports
+hs_err_pid*
+replay_pid*
+
+# Generated jars
+*.jar
