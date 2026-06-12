@@ -6,14 +6,16 @@ import id.avalon.managers.GameManager;
 import id.avalon.models.Role;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.Sound;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -59,14 +61,6 @@ public class CustomRoleListener implements Listener {
         event.setCancelled(true);
 
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        
-        player.playSound(
-                player.getLocation(),
-                Sound.UI_BUTTON_CLICK,
-                1.0f,
-                1.0f
-        );
-
 
         int slot = event.getRawSlot();
         if (event.getCurrentItem() == null) return;
@@ -108,7 +102,6 @@ public class CustomRoleListener implements Listener {
 
     private void handleGoodActiveClick(Player player, RoleEditorSession session, int slot) {
 
-        // Cari index dalam GOOD_ACTIVE
         int index = slotIndex(CustomRoleGUI.GOOD_ACTIVE, slot);
         if (index < 0 || index >= session.getNeededGoodCount()) return;
 
@@ -117,6 +110,12 @@ public class CustomRoleListener implements Listener {
         // Slot kosong (question mark) → tandai sebagai pending
         if (role == null) {
             session.selectGoodSlot(index);
+            player.playSound(
+                    player.getLocation(),
+                    Sound.UI_BUTTON_CLICK,
+                    1.0f,
+                    1.0f
+            );
             player.openInventory(gui.create(session));
             return;
         }
@@ -124,12 +123,24 @@ public class CustomRoleListener implements Listener {
         // Merlin tidak bisa dihapus
         if (role == Role.MERLIN) {
             player.sendMessage(Component.text("Merlin tidak bisa dihapus.", NamedTextColor.RED));
+            player.playSound(
+                    player.getLocation(),
+                    Sound.ENTITY_VILLAGER_NO,
+                    1.0f,
+                    1.0f
+            );
             return;
         }
 
         // Hapus role, jadikan null (posisi slot tidak bergeser)
         session.removeGoodSlot(index);
         session.clearPendingSlot();
+        player.playSound(
+                player.getLocation(),
+                Sound.BLOCK_NOTE_BLOCK_BELL,
+                1.0f,
+                1.0f
+        );
         player.openInventory(gui.create(session));
     }
 
@@ -145,6 +156,12 @@ public class CustomRoleListener implements Listener {
         // Slot kosong → tandai sebagai pending
         if (role == null) {
             session.selectEvilSlot(index);
+            player.playSound(
+                    player.getLocation(),
+                    Sound.UI_BUTTON_CLICK,
+                    1.0f,
+                    1.0f
+            );
             player.openInventory(gui.create(session));
             return;
         }
@@ -152,6 +169,12 @@ public class CustomRoleListener implements Listener {
         // Hapus role
         session.removeEvilSlot(index);
         session.clearPendingSlot();
+        player.playSound(
+                player.getLocation(),
+                Sound.BLOCK_NOTE_BLOCK_BELL,
+                1.0f,
+                1.0f
+        );
         player.openInventory(gui.create(session));
     }
 
@@ -165,7 +188,7 @@ public class CustomRoleListener implements Listener {
         // Pastikan pool yang diklik sesuai kubu pending
         if (isGoodPool != session.isPendingGood()) return;
 
-        // Identifikasi role dari posisi di pool
+        // Identifikasi role dari posisi di pool — pakai session sebagai single source of truth
         Role role = resolvePoolRole(session, slot, isGoodPool);
         if (role == null) return;
 
@@ -174,6 +197,12 @@ public class CustomRoleListener implements Listener {
 
         // Isi pending slot
         session.fillPendingSlot(role);
+        player.playSound(
+                player.getLocation(),
+                Sound.BLOCK_NOTE_BLOCK_PLING,
+                1.0f,
+                1.0f
+        );
         player.openInventory(gui.create(session));
     }
 
@@ -182,11 +211,23 @@ public class CustomRoleListener implements Listener {
     private void handleSave(Player player, RoleEditorSession session) {
 
         if (!session.isComplete()) {
+            player.playSound(
+                    player.getLocation(),
+                    Sound.ENTITY_VILLAGER_NO,
+                    1.0f,
+                    1.0f
+            );
             player.sendMessage(Component.text("Masih ada role kosong.", NamedTextColor.RED));
             return;
         }
 
         gameManager.setCustomRoles(session.getPlayerCount(), session.toRoleList());
+        player.playSound(
+                player.getLocation(),
+                Sound.ENTITY_PLAYER_LEVELUP,
+                1.0f,
+                1.0f
+        );
         player.sendMessage(Component.text("Custom role berhasil disimpan.", NamedTextColor.GREEN));
         sessions.remove(player.getUniqueId());
         player.closeInventory();
@@ -196,31 +237,18 @@ public class CustomRoleListener implements Listener {
 
     /**
      * Tentukan Role berdasarkan slot yang diklik di pool.
-     * Pool good rata kiri → item ada di index 0,1,2 dari GOOD_POOL.
-     * Pool evil rata kanan → item ada di (EVIL_POOL.length - evilPool.size()) ke kanan.
+     * Menggunakan session.buildGoodPool() / buildEvilPool() sebagai single source of truth.
      */
     private Role resolvePoolRole(RoleEditorSession session, int slot, boolean isGood) {
 
         if (isGood) {
-            // Bangun good pool sama seperti di GUI
-            java.util.List<Role> pool = new java.util.ArrayList<>();
-            if (!session.isUniqueRoleActive(Role.MERLIN))   pool.add(Role.MERLIN);
-            if (!session.isUniqueRoleActive(Role.PERCIVAL)) pool.add(Role.PERCIVAL);
-            pool.add(Role.LOYAL_SERVANT);
-
+            List<Role> pool = session.buildGoodPool();
             int poolSlotIndex = slotIndex(CustomRoleGUI.GOOD_POOL, slot);
             if (poolSlotIndex < 0 || poolSlotIndex >= pool.size()) return null;
             return pool.get(poolSlotIndex);
 
         } else {
-            // Bangun evil pool sama seperti di GUI
-            java.util.List<Role> pool = new java.util.ArrayList<>();
-            if (!session.isUniqueRoleActive(Role.ASSASSIN))       pool.add(Role.ASSASSIN);
-            if (!session.isUniqueRoleActive(Role.MORGANA))         pool.add(Role.MORGANA);
-            if (!session.isUniqueRoleActive(Role.MORDRED))         pool.add(Role.MORDRED);
-            if (!session.isUniqueRoleActive(Role.OBERON))          pool.add(Role.OBERON);
-            pool.add(Role.MINION_OF_MORDRED);
-
+            List<Role> pool = session.buildEvilPool();
             // Evil pool rata kanan: evilStart = EVIL_POOL.length - pool.size()
             int evilStart = CustomRoleGUI.EVIL_POOL.length - pool.size();
             int poolSlotIndex = slotIndex(CustomRoleGUI.EVIL_POOL, slot) - evilStart;

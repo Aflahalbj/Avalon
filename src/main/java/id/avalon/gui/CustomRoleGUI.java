@@ -3,6 +3,8 @@ package id.avalon.gui;
 import id.avalon.managers.GameManager;
 import id.avalon.models.Role;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
@@ -13,6 +15,7 @@ import org.bukkit.profile.PlayerProfile;
 import org.bukkit.profile.PlayerTextures;
 
 import java.net.URL;
+import java.util.List;
 import java.util.UUID;
 
 public class CustomRoleGUI {
@@ -20,17 +23,10 @@ public class CustomRoleGUI {
     private final GameManager gameManager;
 
     // ── Mapping slot ──────────────────────────────────────────────────────────
-    // goodSlots[0..5] → GUI slot:
     public static final int[] GOOD_ACTIVE  = { 0, 1, 2, 9, 10, 11 };
-
-    // evilSlots[0..5] → GUI slot:
     public static final int[] EVIL_ACTIVE  = { 8, 7, 6, 17, 16, 15 };
-
-    // Pool
     public static final int[] GOOD_POOL    = { 27, 28, 29 };
     public static final int[] EVIL_POOL    = { 31, 32, 33, 34, 35 };
-
-    // Separator & save
     private static final int[] SEPARATOR   = { 18, 19, 20, 21, 22, 23, 24, 25, 26 };
     public  static final int   SAVE_SLOT   = 53;
 
@@ -40,10 +36,6 @@ public class CustomRoleGUI {
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
-    /**
-     * Buat inventory dari RoleEditorSession.
-     * Dipanggil saat membuka GUI dan saat re-render setelah interaksi.
-     */
     public Inventory create(RoleEditorSession session) {
 
         Inventory inv = Bukkit.createInventory(
@@ -52,67 +44,34 @@ public class CustomRoleGUI {
                 Component.text(session.getPlayerCount() + " Player Custom Role")
         );
 
-        // Separator
         for (int slot : SEPARATOR) inv.setItem(slot, filler());
 
-        // ── Good active slots ────────────────────────────────────────────────
         int neededGood = session.getNeededGoodCount();
         for (int i = 0; i < neededGood; i++) {
             Role role = session.getGoodSlot(i);
             inv.setItem(GOOD_ACTIVE[i], role != null ? roleItem(role) : goodQuestionMark());
         }
 
-        // ── Evil active slots ────────────────────────────────────────────────
         int neededEvil = session.getNeededEvilCount();
         for (int i = 0; i < neededEvil; i++) {
             Role role = session.getEvilSlot(i);
             inv.setItem(EVIL_ACTIVE[i], role != null ? roleItem(role) : evilQuestionMark());
         }
 
-        // ── Good pool (rata kiri) ─────────────────────────────────────────────
-        java.util.List<Role> goodPool = buildGoodPool(session);
+        List<Role> goodPool = session.buildGoodPool();
         for (int i = 0; i < goodPool.size() && i < GOOD_POOL.length; i++) {
             inv.setItem(GOOD_POOL[i], roleItem(goodPool.get(i)));
         }
 
-        // ── Evil pool (rata kanan) ────────────────────────────────────────────
-        java.util.List<Role> evilPool = buildEvilPool(session);
+        List<Role> evilPool = session.buildEvilPool();
         int evilStart = EVIL_POOL.length - evilPool.size();
         for (int i = 0; i < evilPool.size(); i++) {
             inv.setItem(EVIL_POOL[evilStart + i], roleItem(evilPool.get(i)));
         }
 
-        // Save
         inv.setItem(SAVE_SLOT, saveButton());
 
         return inv;
-    }
-
-    // ── Pool builder ──────────────────────────────────────────────────────────
-
-    private java.util.List<Role> buildGoodPool(RoleEditorSession session) {
-        java.util.List<Role> pool = new java.util.ArrayList<>();
-
-        // Merlin & Percival hanya muncul kalau belum aktif
-        if (!session.isUniqueRoleActive(Role.MERLIN))    pool.add(Role.MERLIN);
-        if (!session.isUniqueRoleActive(Role.PERCIVAL))  pool.add(Role.PERCIVAL);
-        // LOYAL_SERVANT selalu tersedia
-        pool.add(Role.LOYAL_SERVANT);
-
-        return pool;
-    }
-
-    private java.util.List<Role> buildEvilPool(RoleEditorSession session) {
-        java.util.List<Role> pool = new java.util.ArrayList<>();
-
-        if (!session.isUniqueRoleActive(Role.ASSASSIN))         pool.add(Role.ASSASSIN);
-        if (!session.isUniqueRoleActive(Role.MORGANA))          pool.add(Role.MORGANA);
-        if (!session.isUniqueRoleActive(Role.MORDRED))          pool.add(Role.MORDRED);
-        if (!session.isUniqueRoleActive(Role.OBERON))           pool.add(Role.OBERON);
-        // MINION_OF_MORDRED selalu tersedia
-        pool.add(Role.MINION_OF_MORDRED);
-
-        return pool;
     }
 
     // ── Item builders ─────────────────────────────────────────────────────────
@@ -121,35 +80,35 @@ public class CustomRoleGUI {
         return switch (role) {
             case MERLIN -> customHead(
                     "http://textures.minecraft.net/texture/4fa89cc8985a8fafaf6d30c17d630434886c24b07496c6be6b018b0cdc94ddc",
-                    "§bMerlin"
+                    Component.text("Merlin", NamedTextColor.AQUA)
             );
             case PERCIVAL -> customHead(
                     "http://textures.minecraft.net/texture/f48ae5206da8fd83839103644752bd26ddd7f428047dcb3b551db51df7ea3b10",
-                    "§bPercival"
+                    Component.text("Percival", NamedTextColor.AQUA)
             );
             case LOYAL_SERVANT -> customHead(
                     "http://textures.minecraft.net/texture/f4087b40471f8bfb007dd1d9ab995b5cfe2bbbe9d5f1fa8d35447de6754c6bc4",
-                    "§bLoyal Servant"
+                    Component.text("Loyal Servant", NamedTextColor.AQUA)
             );
             case ASSASSIN -> customHead(
                     "http://textures.minecraft.net/texture/ea9e84680e5c31ba029f43d4a6cd6969e5ea846a204c5432a0e6d3ba250b1411",
-                    "§cAssassin"
+                    Component.text("Assassin", NamedTextColor.RED)
             );
             case MORGANA -> customHead(
                     "http://textures.minecraft.net/texture/555858616c2609c9a293da98f503fdb006b1854b058fe674c3c6f7d143a01e21",
-                    "§cMorgana"
+                    Component.text("Morgana", NamedTextColor.RED)
             );
             case MORDRED -> customHead(
                     "http://textures.minecraft.net/texture/312567a65043770ee35a7749b361d6c020105ffef2bc8401747815eddf61e96e",
-                    "§cMordred"
+                    Component.text("Mordred", NamedTextColor.RED)
             );
             case OBERON -> customHead(
                     "http://textures.minecraft.net/texture/bab8f8e72fdaee2caf7220c438056a7fb7363edac791750a221bdb914d625cb6",
-                    "§cOberon"
+                    Component.text("Oberon", NamedTextColor.RED)
             );
             case MINION_OF_MORDRED -> customHead(
                     "http://textures.minecraft.net/texture/4635c747938e21e25fe3da0aaaf7c5ecb14c3e3b6aba7d2ee6e397ed59255b0",
-                    "§cMinion Of Mordred"
+                    Component.text("Minion Of Mordred", NamedTextColor.RED)
             );
         };
     }
@@ -157,21 +116,21 @@ public class CustomRoleGUI {
     public ItemStack goodQuestionMark() {
         return customHead(
                 "http://textures.minecraft.net/texture/c35ba393b8610b63ebee4c13c8358bc6c94a9dedc8e4d7d36b922257e65e8",
-                "§7Kosong"
+                Component.text("Kosong", NamedTextColor.GRAY)
         );
     }
 
     public ItemStack evilQuestionMark() {
         return customHead(
                 "http://textures.minecraft.net/texture/4fd5bde994e0a647af1823681a613c2bfc3d9736f889dbf8c3bbba5a13f8ed",
-                "§7Kosong"
+                Component.text("Kosong", NamedTextColor.GRAY)
         );
     }
 
     private ItemStack saveButton() {
         return customHead(
                 "http://textures.minecraft.net/texture/d9980c1d211809a9b6565088f56a38f2ef49115c1054fa66245122e9eeedecc2",
-                "§a§lSIMPAN"
+                Component.text("SIMPAN", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
         );
     }
 
@@ -183,7 +142,7 @@ public class CustomRoleGUI {
         return item;
     }
 
-    private ItemStack customHead(String textureUrl, String displayName) {
+    private ItemStack customHead(String textureUrl, Component displayName) {
         ItemStack item = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta meta = (SkullMeta) item.getItemMeta();
 
@@ -193,12 +152,12 @@ public class CustomRoleGUI {
         try {
             textures.setSkin(new URL(textureUrl));
         } catch (Exception e) {
-            e.printStackTrace();
+            Bukkit.getLogger().warning("[Avalon] Gagal set skin texture: " + textureUrl + " - " + e.getMessage());
         }
 
         profile.setTextures(textures);
         meta.setOwnerProfile(profile);
-        meta.displayName(Component.text(displayName));
+        meta.displayName(displayName);
         item.setItemMeta(meta);
 
         return item;

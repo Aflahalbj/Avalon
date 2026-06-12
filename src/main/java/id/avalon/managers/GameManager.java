@@ -5,6 +5,8 @@ import id.avalon.models.Role;
 import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.format.Style;
 import org.bukkit.*;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.entity.*;
@@ -111,6 +113,7 @@ public class GameManager {
     public Role getRole(Player player) {
         return playerRoles.get(player.getUniqueId());
     }
+
     private List<Role> getDefaultRoles(int playerCount) {
 
         List<Role> roles = new ArrayList<>();
@@ -187,6 +190,15 @@ public class GameManager {
                 roles.add(Role.MORGANA);
                 roles.add(Role.MORDRED);
                 roles.add(Role.OBERON);
+            }
+
+            default -> {
+                // Tidak seharusnya terjadi karena startGame() sudah validasi 5-10,
+                // tapi kalau sampai ke sini lempar exception supaya ketahuan saat dev.
+                throw new IllegalArgumentException(
+                    "getDefaultRoles() dipanggil dengan playerCount tidak valid: " + playerCount
+                    + ". Harus antara 5-10."
+                );
             }
         }
 
@@ -273,14 +285,15 @@ public class GameManager {
                                 1f,
                                 1f
                         );
-                        p.sendMessage(" ");
-                        p.sendMessage("§6══════════════════════");
 
-                        for (String line : getRoleDescription(realRole)) {
+                        p.sendMessage(Component.text(" "));
+                        p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
+
+                        for (Component line : getRoleDescription(realRole)) {
                             p.sendMessage(line);
                         }
 
-                        p.sendMessage("§6══════════════════════");
+                        p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
                     }
 
                     cancel();
@@ -316,56 +329,64 @@ public class GameManager {
         }.runTaskTimer(plugin, 0L, 2L);
     }
 
-    private List<String> getRoleDescription(Role role) {
+    private List<Component> getRoleDescription(Role role) {
 
         return switch (role) {
 
             case MERLIN -> List.of(
-                    "  §aAnda adalah §bMerlin",
-                    "  §rAnda dapat melihat semua kubu jahat kecuali Mordred.",
-                    "  §rTuntun kubu baik dalam memilih orang yang akan menjalankan misi!",
-                    "  §cJangan sampai kubu jahat mengetahui siapa Anda!"
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Merlin", NamedTextColor.AQUA)),
+                    Component.text("  Anda dapat melihat semua kubu jahat kecuali Mordred.", NamedTextColor.WHITE),
+                    Component.text("  Tuntun kubu baik dalam memilih orang yang akan menjalankan misi!", NamedTextColor.WHITE),
+                    Component.text("  Jangan sampai kubu jahat mengetahui siapa Anda!", NamedTextColor.RED)
             );
 
             case PERCIVAL -> List.of(
-                    "  §aAnda adalah §bPercival",
-                    "  §rAnda melihat Merlin dan Morgana",
-                    "  §rtetapi tidak tahu siapa Merlin yang asli."
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Percival", NamedTextColor.AQUA)),
+                    Component.text("  Anda melihat Merlin dan Morgana", NamedTextColor.WHITE),
+                    Component.text("  tetapi tidak tahu siapa Merlin yang asli.", NamedTextColor.WHITE)
             );
 
             case LOYAL_SERVANT -> List.of(
-                    "  §aAnda adalah §bLoyal Servant",
-                    "  §rBantu kubu baik menyelesaikan misi."
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Loyal Servant", NamedTextColor.AQUA)),
+                    Component.text("  Bantu kubu baik menyelesaikan misi.", NamedTextColor.WHITE)
             );
 
             case ASSASSIN -> List.of(
-                    "  §aAnda adalah §cAssassin",
-                    "  §rGagalkan misi kubu baik!",
-                    "  §rJika kubu baik menang, bunuh Merlin untuk mencuri kemenangan."                   
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Assassin", NamedTextColor.RED)),
+                    Component.text("  Gagalkan misi kubu baik!", NamedTextColor.WHITE),
+                    Component.text("  Jika kubu baik menang, bunuh Merlin untuk mencuri kemenangan.", NamedTextColor.WHITE)
             );
 
             case MORGANA -> List.of(
-                    "  §aAnda adalah §cMorgana",
-                    "  §rGagalkan misi kubu baik!",
-                    "  §rAnda terlihat seperti Merlin bagi Percival."
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Morgana", NamedTextColor.RED)),
+                    Component.text("  Gagalkan misi kubu baik!", NamedTextColor.WHITE),
+                    Component.text("  Anda terlihat seperti Merlin bagi Percival.", NamedTextColor.WHITE)
             );
 
             case MORDRED -> List.of(
-                    "  §aAnda adalah §cMordred",
-                    "  §rGagalkan misi kubu baik!",
-                    "  §rMerlin tidak dapat melihat Anda."
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Mordred", NamedTextColor.RED)),
+                    Component.text("  Gagalkan misi kubu baik!", NamedTextColor.WHITE),
+                    Component.text("  Merlin tidak dapat melihat Anda.", NamedTextColor.WHITE)
             );
 
             case OBERON -> List.of(
-                    "  §aAnda adalah §cOberon",
-                    "  §rGagalkan misi kubu baik!",
-                    "  §rAnda tahu siapa merlin, tetapi kubu jahat tidak mengetahui Anda",
-                    "  §rYakinkan mereka pada akhir permainan, bahwa anda adalah Oberon."
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Oberon", NamedTextColor.RED)),
+                    Component.text("  Gagalkan misi kubu baik!", NamedTextColor.WHITE),
+                    Component.text("  Anda tidak tahu kubu jahat lainnya.", NamedTextColor.WHITE),
+                    Component.text("  Kubu jahat lainnya pun tidak tahu bahwa anda bagian dari mereka.", NamedTextColor.WHITE)
             );
 
             case MINION_OF_MORDRED -> List.of(
-                    "  §aAnda adalah §cMinion of Mordred",
-                    "  §rGagalkan misi kubu baik!"
+                    Component.text("  Anda adalah ", NamedTextColor.GREEN)
+                        .append(Component.text("Minion of Mordred", NamedTextColor.RED)),
+                    Component.text("  Gagalkan misi kubu baik!", NamedTextColor.WHITE)
             );
         };
     }
@@ -407,7 +428,7 @@ public class GameManager {
 
                     p.sendTitle(
                         "Game dimulai dalam...",
-                        "§e§l" + seconds,
+                        "§e§l" + String.valueOf(seconds),
                         0, 25, 0
                     );
 
@@ -449,13 +470,8 @@ public class GameManager {
         }
 
         gameRunning = true;
-
-        if (cutsceneEnabled) {
-            startCountdown(activePlayers);
-        } else {
-            spawnMannequin(initiator.getWorld());
-            startCountdown(activePlayers);
-        }
+        spawnMannequin(initiator.getWorld());
+        startCountdown(activePlayers);
     }
 
     private void spawnMannequin(World world) {
@@ -495,16 +511,15 @@ public class GameManager {
         }
 
         cleanup();
-        broadcastMessage("§c§lGame dihentikan oleh admin.");
-        initiator.sendMessage(Component.text("§aGame berhasil dihentikan. Player masih terdaftar."));
+        broadcast(Component.text("Game dihentikan oleh admin.", NamedTextColor.RED)
+            .decorate(TextDecoration.BOLD));
+        initiator.sendMessage(Component.text("Game berhasil dihentikan. Player masih terdaftar.", NamedTextColor.GREEN));
     }
 
     // ===== CUTSCENE =====
 
     private void playCutscene(World world, List<Player> activePlayers) {
         cutsceneRunning = true;
-        // Summon Mannequin pak fred dengan skin dari username "fredganteng"
-        spawnMannequin(world);
 
         // Teleport semua player ke spectator + lock kamera
         for (Player p : activePlayers) {
@@ -513,14 +528,16 @@ public class GameManager {
             lockCamera(p, SPECTATOR_YAW, SPECTATOR_PITCH);
         }
 
-        // Cutscene messages tiap 1 detik
-        String[] lines = {
-            "§eSudah satu bulan lamanya pak fred tidak sadarkan diri",
-            "§eKonon katanya ada satu ramuan yang dapat menyembuhkannya",
-            "§eRamuan yang dibuat dengan 3 tanaman langka",
-            "§6§oPitcher plant, Torch flower, Cactus flower",
-            "§eHanya ada satu orang yang dapat menyembuhkannya",
-            "§c§lMERLIN§r§6, sang penyihir terhebat",
+        // Cutscene messages tiap 9 detik
+        Component[] lines = {
+            Component.text("Sudah satu bulan lamanya pak fred tidak sadarkan diri", NamedTextColor.YELLOW),
+            Component.text("Konon katanya ada satu ramuan yang dapat menyembuhkannya", NamedTextColor.YELLOW),
+            Component.text("Ramuan yang dibuat dengan 3 tanaman langka", NamedTextColor.YELLOW),
+            Component.text("Pitcher plant, Torch flower, Cactus flower",
+                Style.style(NamedTextColor.GOLD, TextDecoration.ITALIC)),
+            Component.text("Hanya ada satu orang yang dapat menyembuhkannya", NamedTextColor.YELLOW),
+            Component.text("MERLIN", NamedTextColor.RED).decorate(TextDecoration.BOLD)
+                .append(Component.text(", sang penyihir terhebat", NamedTextColor.GOLD)),
         };
 
         cutsceneTask = new BukkitRunnable() {
@@ -540,7 +557,7 @@ public class GameManager {
                     }.runTaskLater(plugin, 10L);
                     return;
                 }
-                String line = lines[index++];
+                Component line = lines[index++];
                 for (Player p : getOnlinePlayers()) p.sendMessage(line);
             }
         }.runTaskTimer(plugin, 0L, 180L);
@@ -575,13 +592,16 @@ public class GameManager {
     private void startGamePhase(List<Player> activePlayers) {
         World world = getGameWorld();
         if (world == null) return;
-        broadcastMessage("§6═══════════════════════");
-        broadcastMessage("");
-        broadcastMessage("  §a§l🤫 GAME DIMULAI 🤫");
-        broadcastMessage("  §eJaga & bantu merlin mendapatkan 3 tanaman untuk menang!");
-        broadcastMessage("  §cJangan biarkan kubu jahat menggagalkan misi!");
-        broadcastMessage("");
-        broadcastMessage("§6═══════════════════════");
+
+        broadcast(Component.text("═══════════════════════", NamedTextColor.GOLD));
+        broadcast(Component.text(" "));
+        broadcast(Component.text("  🤫 GAME DIMULAI 🤫", NamedTextColor.GREEN)
+            .decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Jaga & bantu merlin mendapatkan 3 tanaman untuk menang!", NamedTextColor.YELLOW));
+        broadcast(Component.text("  Jangan biarkan kubu jahat menggagalkan misi!", NamedTextColor.RED));
+        broadcast(Component.text(" "));
+        broadcast(Component.text("═══════════════════════", NamedTextColor.GOLD));
+
         world.getBlockAt(BASE_X, BASE_Y, BASE_Z)
             .setType(Material.WATER_CAULDRON);
 
@@ -592,11 +612,8 @@ public class GameManager {
         new BukkitRunnable() {
             @Override
             public void run() {
-
                 assignRoles(activePlayers);
-
                 startRoleReveal(activePlayers);
-
             }
         }.runTaskLater(plugin, 20L);
     }
@@ -607,7 +624,6 @@ public class GameManager {
             int x = BASE_X + pos[0];
             int z = BASE_Z + pos[1];
 
-            // Setblock jungle slab bottom
             Location slabLoc = new Location(world, x, BASE_Y, z);
             world.getBlockAt(slabLoc).setType(Material.JUNGLE_SLAB);
             org.bukkit.block.Block block = world.getBlockAt(slabLoc);
@@ -615,7 +631,7 @@ public class GameManager {
                 slab.setType(Slab.Type.BOTTOM);
                 block.setBlockData(slab);
             }
-            
+
             final int fx = x, fz = z;
             final double dx = (BASE_X + 0.5) - (fx + 0.5);
             final double dz = (BASE_Z + 0.5) - (fz + 0.5);
@@ -624,16 +640,10 @@ public class GameManager {
             p.setGameMode(GameMode.SURVIVAL);
             p.teleport(new Location(world, x + 0.5, BASE_Y, z + 0.5, yaw, 0));
 
-            // Spawn invisible seat armor stand lalu paksa player duduk
             final Player fp = p;
             new BukkitRunnable() {
                 @Override
                 public void run() {
-                    // double dx = (BASE_X + 0.5) - (fx + 0.5);
-                    // double dz = (BASE_Z + 0.5) - (fz + 0.5);
-
-                    // float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-
                     Location seatLoc = new Location(
                         world,
                         fx + 0.5,
@@ -660,7 +670,7 @@ public class GameManager {
 
     // ===== UTILS =====
 
-    private void broadcastMessage(String message) {
+    private void broadcast(Component message) {
         for (Player p : getOnlinePlayers()) p.sendMessage(message);
     }
 
@@ -685,12 +695,12 @@ public class GameManager {
     public void setGameRunning(boolean running) { this.gameRunning = running; }
 
     public void cleanup() {
-        
+
         if (cutsceneTask != null) {
             cutsceneTask.cancel();
             cutsceneTask = null;
         }
-        
+
         if (countdownTask != null) {
             countdownTask.cancel();
             countdownTask = null;
@@ -716,10 +726,11 @@ public class GameManager {
             p.setGameMode(GameMode.SURVIVAL);
         }
 
-        // Hapus semua entity Avalon
-        for (World world : Bukkit.getWorlds()) {
+        // Hapus semua entity Avalon dan slab di world game
+        World gameWorld = getGameWorld();
+        if (gameWorld != null) {
 
-            for (Entity e : world.getEntities()) {
+            for (Entity e : gameWorld.getEntities()) {
 
                 if (e.getScoreboardTags().contains("avalon_seat")) {
                     e.remove();
@@ -730,21 +741,16 @@ public class GameManager {
                 }
             }
 
-            // Hapus semua slab Avalon
             for (int[] pos : PLAYER_SLAB_POSITIONS) {
-
                 int x = BASE_X + pos[0];
                 int z = BASE_Z + pos[1];
-
-                world.getBlockAt(x, BASE_Y, z)
-                    .setType(Material.AIR);
+                gameWorld.getBlockAt(x, BASE_Y, z).setType(Material.AIR);
             }
-            world.getBlockAt(BASE_X, BASE_Y, BASE_Z)
-                .setType(Material.AIR);
 
-            world.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z)
-                .setType(Material.ORANGE_TERRACOTTA);
-            }
+            gameWorld.getBlockAt(BASE_X, BASE_Y, BASE_Z).setType(Material.AIR);
+            gameWorld.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z).setType(Material.ORANGE_TERRACOTTA);
+        }
+
         gameRunning = false;
         cutsceneRunning = false;
     }

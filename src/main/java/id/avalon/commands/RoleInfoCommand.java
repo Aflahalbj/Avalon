@@ -119,9 +119,6 @@ public class RoleInfoCommand implements CommandExecutor {
 
               §aKemampuan:
               §r• Sabotase misi
-              §r• Mengetahui siapa Merlin
-
-              §ePada akhir permainan, Oberon harus meyakinkan kubu jahat lainnya bahwa dia Oberon.
             """
         ),
 

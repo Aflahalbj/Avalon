@@ -48,16 +48,19 @@ public class RegisCommand implements CommandExecutor {
             sender.sendMessage(Component.text(
                     "Arena Avalon sudah penuh! (maksimal "
                     + gameManager.getMaxPlayers()
-                    + " player)"                   , NamedTextColor.RED
+                    + " player)", NamedTextColor.RED
             ));
             return true;
         }
 
         if (gameManager.registerPlayer(playerName)) {
-            sender.sendMessage(Component.text("§a✔ " + playerName + " berhasil didaftarkan ke Avalon!"));
-            sender.sendMessage(Component.text("§7Total player: §f" + gameManager.getRegisteredPlayers().size()));
+            sender.sendMessage(Component.text("✔ " + playerName + " berhasil didaftarkan ke Avalon!", NamedTextColor.GREEN));
+            sender.sendMessage(
+                Component.text("Total player: ", NamedTextColor.GRAY)
+                    .append(Component.text(String.valueOf(gameManager.getRegisteredPlayers().size()), NamedTextColor.WHITE))
+            );
         } else {
-            sender.sendMessage(Component.text("§e" + playerName + " sudah terdaftar!"));
+            sender.sendMessage(Component.text(playerName + " sudah terdaftar!", NamedTextColor.YELLOW));
         }
 
         return true;

@@ -19,7 +19,7 @@ commands:
     permission: avalon.admin
   customrole:
     description: Custom role Avalon
-    usage: /customrole <5-10>
+    usage: /customrole
     permission: avalon.admin
   cutscene:
     description: Toggle cutscene on/off

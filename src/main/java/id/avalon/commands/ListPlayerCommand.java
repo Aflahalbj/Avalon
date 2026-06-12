@@ -1,6 +1,8 @@
 package id.avalon.commands;
 
 import id.avalon.managers.GameManager;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -23,24 +25,25 @@ public class ListPlayerCommand implements CommandExecutor {
             @NotNull String label,
             @NotNull String[] args) {
 
-        List<String> players =
-                gameManager.getRegisteredPlayers();
+        List<String> players = gameManager.getRegisteredPlayers();
 
         if (players.isEmpty()) {
-            sender.sendMessage("§cBelum ada player terdaftar.");
+            sender.sendMessage(Component.text("Belum ada player terdaftar.", NamedTextColor.RED));
             return true;
         }
 
-        sender.sendMessage("§6=== List Players ===");
+        sender.sendMessage(Component.text("=== List Players ===", NamedTextColor.GOLD));
 
         for (int i = 0; i < players.size(); i++) {
             sender.sendMessage(
-                "§e" + (i + 1) + ". §f" + players.get(i)
+                Component.text((i + 1) + ". ", NamedTextColor.YELLOW)
+                    .append(Component.text(players.get(i), NamedTextColor.WHITE))
             );
         }
 
         sender.sendMessage(
-            "§7Total: §f" + players.size()
+            Component.text("Total: ", NamedTextColor.GRAY)
+                .append(Component.text(String.valueOf(players.size()), NamedTextColor.WHITE))
         );
 
         return true;

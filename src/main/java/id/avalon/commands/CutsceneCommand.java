@@ -1,6 +1,8 @@
 package id.avalon.commands;
 
 import id.avalon.managers.GameManager;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -18,19 +20,19 @@ public class CutsceneCommand implements CommandExecutor {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length < 1) {
-            sender.sendMessage("§cUsage: /cutscene <on|off>");
+            sender.sendMessage(Component.text("Usage: /cutscene <on|off>", NamedTextColor.RED));
             return true;
         }
 
         String toggle = args[0].toLowerCase();
         if (toggle.equals("on")) {
             gameManager.setCutsceneEnabled(true);
-            sender.sendMessage("§a✔ Cutscene diaktifkan.");
+            sender.sendMessage(Component.text("✔ Cutscene diaktifkan.", NamedTextColor.GREEN));
         } else if (toggle.equals("off")) {
             gameManager.setCutsceneEnabled(false);
-            sender.sendMessage("§e✔ Cutscene dinonaktifkan.");
+            sender.sendMessage(Component.text("✔ Cutscene dinonaktifkan.", NamedTextColor.YELLOW));
         } else {
-            sender.sendMessage("§cUsage: /cutscene <on|off>");
+            sender.sendMessage(Component.text("Usage: /cutscene <on|off>", NamedTextColor.RED));
         }
 
         return true;

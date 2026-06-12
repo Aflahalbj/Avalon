@@ -2,6 +2,9 @@ package id.avalon.gui;
 
 import id.avalon.models.Role;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Session editor berbasis fixed-slot.
  *
@@ -27,7 +30,7 @@ public class RoleEditorSession {
     // Format: "good:0", "evil:2", atau null kalau belum pilih.
     private String pendingSlot = null;
 
-    public RoleEditorSession(int playerCount, java.util.List<Role> initialRoles) {
+    public RoleEditorSession(int playerCount, List<Role> initialRoles) {
         this.playerCount = playerCount;
         loadFromList(initialRoles);
     }
@@ -38,7 +41,7 @@ public class RoleEditorSession {
      * Isi goodSlots / evilSlots dari list role (urutan good dulu, lalu evil).
      * Good diisi dari index 0 ke atas; evil dari index 0 ke atas.
      */
-    private void loadFromList(java.util.List<Role> roles) {
+    private void loadFromList(List<Role> roles) {
         int gi = 0, ei = 0;
         for (Role r : roles) {
             if (r == null) continue;
@@ -122,10 +125,8 @@ public class RoleEditorSession {
 
     /** True jika semua slot aktif (good + evil) sudah terisi. */
     public boolean isComplete() {
-        int needed = playerCount;
-        // Hitung jumlah good slot aktif dari default config
         int neededGood = getNeededGoodCount();
-        int neededEvil = needed - neededGood;
+        int neededEvil = getNeededEvilCount();
 
         for (int i = 0; i < neededGood; i++) {
             if (goodSlots[i] == null) return false;
@@ -159,13 +160,43 @@ public class RoleEditorSession {
     /**
      * Kumpulkan semua role (good lalu evil) ke List untuk disimpan ke GameManager.
      */
-    public java.util.List<Role> toRoleList() {
-        java.util.List<Role> list = new java.util.ArrayList<>();
+    public List<Role> toRoleList() {
+        List<Role> list = new ArrayList<>();
         int ng = getNeededGoodCount();
         int ne = getNeededEvilCount();
         for (int i = 0; i < ng; i++) list.add(goodSlots[i]);
         for (int i = 0; i < ne; i++) list.add(evilSlots[i]);
         return list;
+    }
+
+    // ── Pool builder (single source of truth) ───────────────────────────────
+
+    /**
+     * Bangun good pool: role yang tersedia untuk dipilih dari pool.
+     * Merlin & Percival hanya muncul kalau belum aktif.
+     * LOYAL_SERVANT selalu tersedia.
+     */
+    public List<Role> buildGoodPool() {
+        List<Role> pool = new ArrayList<>();
+        if (!isUniqueRoleActive(Role.MERLIN))   pool.add(Role.MERLIN);
+        if (!isUniqueRoleActive(Role.PERCIVAL)) pool.add(Role.PERCIVAL);
+        pool.add(Role.LOYAL_SERVANT);
+        return pool;
+    }
+
+    /**
+     * Bangun evil pool: role yang tersedia untuk dipilih dari pool.
+     * Role unik hanya muncul kalau belum aktif.
+     * MINION_OF_MORDRED selalu tersedia.
+     */
+    public List<Role> buildEvilPool() {
+        List<Role> pool = new ArrayList<>();
+        if (!isUniqueRoleActive(Role.ASSASSIN))       pool.add(Role.ASSASSIN);
+        if (!isUniqueRoleActive(Role.MORGANA))         pool.add(Role.MORGANA);
+        if (!isUniqueRoleActive(Role.MORDRED))         pool.add(Role.MORDRED);
+        if (!isUniqueRoleActive(Role.OBERON))          pool.add(Role.OBERON);
+        pool.add(Role.MINION_OF_MORDRED);
+        return pool;
     }
 
     // ── Cek duplikat role unik ───────────────────────────────────────────────

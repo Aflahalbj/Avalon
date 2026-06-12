@@ -3,6 +3,8 @@ package id.avalon.commands;
 import id.avalon.gui.CustomRoleGUI;
 import id.avalon.gui.RoleEditorSession;
 import id.avalon.listeners.CustomRoleListener;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 import java.util.ArrayList;
 import id.avalon.managers.GameManager;
@@ -31,16 +33,10 @@ public class CustomRoleCommand implements CommandExecutor {
         if (!(sender instanceof Player player))
             return true;
 
-        if (args.length > 0) {
-            player.sendMessage("§cGunakan: /customrole");
-            return true;
-        }
-
-        int playerCount =
-        gameManager.getRegisteredPlayers().size();
+        int playerCount = gameManager.getRegisteredPlayers().size();
 
         if (playerCount < 5 || playerCount > 10) {
-            player.sendMessage("§cJumlah player harus 5-10");
+            player.sendMessage(Component.text("Jumlah player harus 5-10.", NamedTextColor.RED));
             return true;
         }
 

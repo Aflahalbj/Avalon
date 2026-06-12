@@ -1,6 +1,8 @@
 package id.avalon.commands;
 
 import id.avalon.managers.GameManager;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -19,7 +21,7 @@ public class StopGameCommand implements CommandExecutor {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("§cHarus dijalankan oleh player!");
+            sender.sendMessage(Component.text("Harus dijalankan oleh player!", NamedTextColor.RED));
             return true;
         }
 

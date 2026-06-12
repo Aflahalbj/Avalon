@@ -2,6 +2,8 @@ package id.avalon.commands;
 
 import id.avalon.managers.GameManager;
 import id.avalon.models.Role;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -25,7 +27,7 @@ public class DebugRolesCommand implements CommandExecutor {
             @NotNull String[] args
     ) {
 
-        sender.sendMessage("§6=== ROLE DEBUG ===");
+        sender.sendMessage(Component.text("=== ROLE DEBUG ===", NamedTextColor.GOLD));
 
         for (Player player : Bukkit.getOnlinePlayers()) {
 
@@ -35,9 +37,9 @@ public class DebugRolesCommand implements CommandExecutor {
                 continue;
 
             sender.sendMessage(
-                    "§e" + player.getName()
-                            + " §7-> §f"
-                            + role.name()
+                Component.text(player.getName(), NamedTextColor.YELLOW)
+                    .append(Component.text(" -> ", NamedTextColor.GRAY))
+                    .append(Component.text(role.name(), NamedTextColor.WHITE))
             );
         }
 
