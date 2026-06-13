@@ -1,6 +1,8 @@
 package id.avalon.listeners;
 
 import id.avalon.managers.GameManager;
+
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
@@ -20,24 +22,26 @@ public class CutsceneListener implements Listener {
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
+        if (gm.isMovementLocked(player)) {
 
-        if (!gm.isCameraLocked(player))
-            return;
+            if (event.getTo() == null)
+                return;
 
-        Location from = event.getFrom();
-        Location to = event.getTo();
+            if (
+                event.getFrom().getX() != event.getTo().getX()
+                || event.getFrom().getY() != event.getTo().getY()
+                || event.getFrom().getZ() != event.getTo().getZ()
+            ) {
 
-        if (to == null)
-            return;
+                Location to = event.getTo();
 
-        to.setX(from.getX());
-        to.setY(from.getY());
-        to.setZ(from.getZ());
+                to.setX(event.getFrom().getX());
+                to.setY(event.getFrom().getY());
+                to.setZ(event.getFrom().getZ());
 
-        to.setYaw(gm.getLockedYaw(player));
-        to.setPitch(gm.getLockedPitch(player));
-
-        event.setTo(to);
+                event.setTo(to);
+            }
+        }
     }
 
     @EventHandler
@@ -50,6 +54,11 @@ public class CutsceneListener implements Listener {
             return;
 
         if (!stand.getScoreboardTags().contains("avalon_seat"))
+            return;
+
+        // Izinkan eject kalau game manager sedang dalam fase reveal
+        // (supaya standAsViewer() dan standAsTarget() bisa eject player)
+        if (gm.isRevealPhaseActive())
             return;
 
         event.setCancelled(true);
