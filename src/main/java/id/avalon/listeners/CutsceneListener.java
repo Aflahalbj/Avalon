@@ -42,6 +42,18 @@ public class CutsceneListener implements Listener {
                 event.setTo(to);
             }
         }
+        if (!gm.isCameraLocked(player))
+            return;
+
+        Location to = event.getTo();
+
+        if (to == null)
+            return;
+
+        to.setYaw(gm.getLockedYaw(player));
+        to.setPitch(gm.getLockedPitch(player));
+
+        event.setTo(to);
     }
 
     @EventHandler

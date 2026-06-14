@@ -15,6 +15,8 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataType;
 
 import java.util.*;
 
@@ -42,6 +44,16 @@ public class GameManager {
     private final Set<UUID> movementLocked = new HashSet<>();
     private final Map<UUID, Role>  playerRoles = new HashMap<>();
 
+    // ── King (Raja) mechanism ─────────────────────────────────────────────────
+    /** Urutan player untuk rotasi Raja. Diset saat game dimulai dan tidak berubah. */
+    private final List<String> kingOrder = new ArrayList<>();
+    /** Index di kingOrder yang saat ini menjadi Raja. */
+    private int currentKingIndex = -1;
+    /** Misi yang sedang berjalan (1-5). */
+    private int currentMission = 1;
+    /** Session pemilihan tim per Raja (UUID raja -> list nama yang sudah dipilih). */
+    private final Map<UUID, List<String>> teamSelectionSessions = new HashMap<>();
+
     // ── Koordinat ────────────────────────────────────────────────────────────
 
     private static final double MANNEQUIN_X   = -60.5;
@@ -65,6 +77,8 @@ public class GameManager {
     private static final int BASE_Z = -379;
 
     // ── Constructor ──────────────────────────────────────────────────────────
+
+    public AvalonPlugin getPlugin() { return plugin; }
 
     public GameManager(AvalonPlugin plugin) {
         this.plugin = plugin;
@@ -180,6 +194,188 @@ public class GameManager {
 
     public void setCustomRoles(int n, List<Role> roles) {
         customRoles.put(n, new ArrayList<>(roles));
+    }
+
+    // ===== KING (RAJA) MANAGEMENT =====
+
+    /**
+     * Rotasi Raja ke player berikutnya searah jarum jam (urutan list).
+     * Dipanggil setelah satu giliran selesai.
+     */
+    public void rotateKing() {
+        if (kingOrder.isEmpty()) return;
+        currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
+        teamSelectionSessions.clear();
+        announceKing();
+    }
+
+    /** Umumkan siapa Raja saat ini ke semua player. */
+    private void announceKing() {
+        String kingName = getCurrentKingName();
+        if (kingName == null) return;
+        broadcast(
+            Component.text(" ")
+        );
+        broadcast(
+            Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD)
+        );
+        broadcast(
+            Component.text("  👑 Raja saat ini: ", NamedTextColor.YELLOW)
+                .append(Component.text(kingName, NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+        );
+        broadcast(
+            Component.text("  Misi ke-" + currentMission + " | Gunakan Buku Pemilihan Tim (klik kanan) untuk memilih anggota tim.", NamedTextColor.GRAY)
+        );
+        broadcast(
+            Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD)
+        );
+
+        // Title ke Raja
+        Player king = Bukkit.getPlayerExact(kingName);
+        if (king != null && king.isOnline()) {
+            king.sendTitle(
+                "§6§l👑 KAMU ADALAH RAJA",
+                "§eGunakan Buku Pemilihan Tim untuk memilih tim misi ke-" + currentMission,
+                10, 60, 20
+            );
+            king.playSound(king.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
+            giveTeamBook(king);
+        }
+    }
+
+    /** Nama Raja aktif. */
+    public String getCurrentKingName() {
+        if (currentKingIndex < 0 || kingOrder.isEmpty()) return null;
+        return kingOrder.get(currentKingIndex);
+    }
+
+    /** Cek apakah player adalah Raja aktif. */
+    public boolean isKing(Player player) {
+        return player.getName().equals(getCurrentKingName());
+    }
+
+    // ── Buku Pemilihan Tim ──────────────────────────────────────────────────────
+
+    /** Namespaced key untuk menandai item Buku Pemilihan Tim. */
+    public static final String PDC_KEY_TEAM_BOOK = "team_book";
+
+    /** Berikan item Buku Pemilihan Tim ke Raja aktif. */
+    public void giveTeamBook(Player king) {
+        if (king == null || !king.isOnline()) return;
+
+        ItemStack book = new ItemStack(Material.WRITTEN_BOOK);
+        org.bukkit.inventory.meta.ItemMeta meta = book.getItemMeta();
+        meta.displayName(
+            Component.text("Buku Pemilihan Tim", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
+        );
+        meta.lore(List.of(
+            Component.text("Klik kanan untuk membuka", NamedTextColor.GRAY),
+            Component.text("menu pemilihan tim misi.", NamedTextColor.GRAY)
+        ));
+        meta.getPersistentDataContainer().set(
+            new NamespacedKey(AvalonPlugin.getInstance(), PDC_KEY_TEAM_BOOK),
+            PersistentDataType.STRING,
+            "true"
+        );
+        book.setItemMeta(meta);
+
+        king.getInventory().addItem(book);
+    }
+
+    /** Hapus item Buku Pemilihan Tim dari inventory Raja. */
+    public void removeTeamBook(Player king) {
+        if (king == null) return;
+
+        NamespacedKey key = new NamespacedKey(AvalonPlugin.getInstance(), PDC_KEY_TEAM_BOOK);
+        org.bukkit.inventory.PlayerInventory inv = king.getInventory();
+
+        for (ItemStack item : inv.getContents()) {
+            if (item == null || item.getType() != Material.WRITTEN_BOOK) continue;
+            org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+            if (meta == null) continue;
+            if (meta.getPersistentDataContainer().has(key, PersistentDataType.STRING)) {
+                inv.remove(item);
+            }
+        }
+    }
+
+    /** Cek apakah item adalah Buku Pemilihan Tim. */
+    public static boolean isTeamBook(ItemStack item) {
+        if (item == null || item.getType() != Material.WRITTEN_BOOK) return false;
+        org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
+        NamespacedKey key = new NamespacedKey(AvalonPlugin.getInstance(), PDC_KEY_TEAM_BOOK);
+        return meta.getPersistentDataContainer().has(key, PersistentDataType.STRING);
+    }
+
+    /** Nomor misi saat ini (1-5). */
+    public int getCurrentMission() {
+        return currentMission;
+    }
+
+    /** Set nomor misi. */
+    public void setCurrentMission(int mission) {
+        this.currentMission = mission;
+    }
+
+    // ── Team Selection Session ─────────────────────────────────────────────────
+
+    /**
+     * Mendapatkan list player yang sudah dipilih Raja di session saat ini.
+     * Jika belum ada session, kembalikan list kosong.
+     */
+    public List<String> getTeamSelectionSession(Player king) {
+        return teamSelectionSessions.getOrDefault(king.getUniqueId(), new ArrayList<>());
+    }
+
+    /** Set list player yang sudah dipilih Raja. */
+    public void setTeamSelectionSession(Player king, List<String> selected) {
+        teamSelectionSessions.put(king.getUniqueId(), new ArrayList<>(selected));
+    }
+
+    /**
+     * Konfirmasi pilihan tim oleh Raja.
+     * Mengumumkan tim yang dipilih ke semua player.
+     */
+    public void confirmTeamSelection(Player king, List<String> team) {
+        // Reset session
+        teamSelectionSessions.remove(king.getUniqueId());
+
+        // Hapus Buku Pemilihan Tim dan mainkan sound konfirmasi
+        removeTeamBook(king);
+        king.playSound(king.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
+        broadcast(
+            Component.text("  ⚔ Tim Misi ke-" + currentMission + " telah dipilih!", NamedTextColor.AQUA)
+                .decorate(TextDecoration.BOLD)
+        );
+        broadcast(
+            Component.text("  Raja: ", NamedTextColor.YELLOW)
+                .append(Component.text(king.getName(), NamedTextColor.GOLD))
+        );
+
+        StringBuilder teamList = new StringBuilder();
+        for (int i = 0; i < team.size(); i++) {
+            teamList.append(team.get(i));
+            if (i < team.size() - 1) teamList.append(", ");
+        }
+        broadcast(
+            Component.text("  Anggota: ", NamedTextColor.WHITE)
+                .append(Component.text(teamList.toString(), NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
+        );
+
+        int playerCount = registeredPlayers.size();
+        if (id.avalon.gui.TeamSelectionGUI.requiresTwoFails(playerCount, currentMission)) {
+            broadcast(
+                Component.text("  ⚠ Misi ini butuh 2 Fail untuk digagalkan!", NamedTextColor.RED)
+                    .decorate(TextDecoration.ITALIC)
+            );
+        }
+
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
+        broadcast(Component.text(" "));
     }
 
     // ===== CAMERA LOCK =====
@@ -635,6 +831,17 @@ public class GameManager {
                 broadcast(Component.text("  ✅ Fase perkenalan selesai!", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
                 broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_GRAY));
                 broadcast(Component.text(" "));
+
+                // 5 detik setelah fase perkenalan, mulai animasi kocok Raja
+                delayedTasks.add(
+                    new BukkitRunnable() {
+                        @Override
+                        public void run() {
+                            if (!gameRunning) return;
+                            startKingReveal(players);
+                        }
+                    }.runTaskLater(plugin, 100L) // 100 ticks = 5 detik
+                );
             }
         }
     }
@@ -647,6 +854,151 @@ public class GameManager {
 
     private Player getPlayerWithRole(List<Player> players, Role role) {
         return players.stream().filter(p -> getRole(p) == role).findFirst().orElse(null);
+    }
+
+    // ===== KING REVEAL =====
+
+    /**
+     * Animasi kocok Raja — dipanggil 5 detik setelah fase perkenalan selesai.
+     * Mirip startRoleReveal: nama player dikocok cepat di title, lalu reveal Raja.
+     */
+    private void startKingReveal(List<Player> players) {
+        if (!gameRunning) return;
+
+        // ── Setup urutan Raja berdasarkan posisi kursi searah jarum jam ────────
+        kingOrder.clear();
+        teamSelectionSessions.clear();
+        currentMission = 1;
+
+        // Bangun map: nama player → index kursinya (sesuai urutan regis / placeSlabsAndSeat)
+        // players sudah terurut sesuai registeredPlayers, index kursi = index di list ini
+        Map<String, Integer> seatIndex = new HashMap<>();
+        for (int i = 0; i < players.size(); i++) {
+            seatIndex.put(players.get(i).getName(), i);
+        }
+
+        // Hitung angle searah jarum jam tiap seat terhadap pusat meja
+        // Minecraft: X = Timur, Z = Selatan; searah jarum jam dari atas = atan2(dX, dZ)
+        // (Utara=0°, Timur=90°, Selatan=180°, Barat=270°)
+        List<String> sorted = new ArrayList<>();
+        for (Player p : players) sorted.add(p.getName());
+
+        sorted.sort((a, b) -> {
+            int idxA = seatIndex.getOrDefault(a, 0);
+            int idxB = seatIndex.getOrDefault(b, 0);
+            int[] posA = PLAYER_SLAB_POSITIONS[idxA];
+            int[] posB = PLAYER_SLAB_POSITIONS[idxB];
+            // dX = pos[0] (offset dari BASE_X), dZ = pos[1] (offset dari BASE_Z)
+            double angleA = Math.toDegrees(Math.atan2(posA[0], posA[1]));
+            double angleB = Math.toDegrees(Math.atan2(posB[0], posB[1]));
+            // Normalise ke [0, 360)
+            if (angleA < 0) angleA += 360;
+            if (angleB < 0) angleB += 360;
+            return Double.compare(angleB, angleA);
+        });
+
+        // Pilih Raja pertama secara acak
+        // int randomStart = (int) (Math.random() * sorted.size());
+        // DEBUG
+        int randomStart = sorted.indexOf("itslyricss");
+        // Rotasi list sehingga raja pertama ada di depan, sisanya tetap searah jarum jam
+        for (int i = 0; i < sorted.size(); i++) {
+            kingOrder.add(sorted.get((randomStart + i) % sorted.size()));
+        }
+
+        currentKingIndex = 0;
+        // String kingName = kingOrder.get(0);
+        // DEBUG
+        String kingName = "itslyricss";
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
+        broadcast(Component.text("  👑 MEMILIH RAJA PERTAMA...", NamedTextColor.YELLOW).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
+        broadcast(Component.text(" "));
+
+        // Animasi kocok — 40 ticks × 2 tick interval = 80 ticks = 4 detik
+        new BukkitRunnable() {
+            int ticks = 0;
+
+            @Override
+            public void run() {
+                if (!gameRunning) { cancel(); return; }
+
+                if (ticks >= 40) {
+                    cancel();
+
+                    // ── Reveal Raja ──
+                    for (Player p : players) {
+                        if (!p.isOnline()) continue;
+
+                        boolean isKingPlayer = p.getName().equals(kingName);
+
+                        if (isKingPlayer) {
+                            // Title khusus untuk Raja
+                            p.sendTitle(
+                                "§6§l👑 KAMU ADALAH RAJA",
+                                "§eKlik kanan §bBuku Pemilihan Tim §euntuk memilih anggota tim!",
+                                10, 80, 20
+                            );
+                            p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
+                            giveTeamBook(p);
+                        } else {
+                            // Title untuk player lain
+                            p.sendTitle(
+                                "§6§l👑 RAJA TELAH DIPILIH",
+                                "§e" + kingName + " §fadalah Raja Misi 1",
+                                10, 80, 20
+                            );
+                            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.2f);
+                        }
+
+                        // Info ke chat
+                        p.sendMessage(Component.text(" "));
+                        p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
+                        p.sendMessage(
+                            Component.text("  👑 Raja Misi 1: ", NamedTextColor.YELLOW)
+                                .append(Component.text(kingName, NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+                        );
+                        p.sendMessage(Component.text("  Urutan Raja:", NamedTextColor.GRAY));
+                        for (int i = 0; i < kingOrder.size(); i++) {
+                            String mark  = (i == 0) ? " §6§l(Raja Sekarang)" : "";
+                            String color = (i == 0) ? "§e" : "§7";
+                            p.sendMessage(Component.text(
+                                "    " + (i + 1) + ". " + color + kingOrder.get(i) + mark
+                            ));
+                        }
+                        p.sendMessage(Component.text(" "));
+                        p.sendMessage(
+                            Component.text("  Misi ke-1 | Kuota Tim: ", NamedTextColor.AQUA)
+                                .append(Component.text(
+                                    id.avalon.gui.TeamSelectionGUI.getTeamSize(players.size(), 1) + " orang",
+                                    NamedTextColor.WHITE).decorate(TextDecoration.BOLD)
+                                )
+                        );
+                        if (isKingPlayer) {
+                            p.sendMessage(
+                                Component.text("  ➤ Klik kanan ", NamedTextColor.GREEN)
+                                    .append(Component.text("Buku Pemilihan Tim", NamedTextColor.AQUA).decorate(TextDecoration.BOLD))
+                                    .append(Component.text(" untuk membuka menu pemilihan tim.", NamedTextColor.GREEN))
+                            );
+                        }
+                        p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
+                        p.sendMessage(Component.text(" "));
+                    }
+                    return;
+                }
+
+                // Frame kocok — tampilkan nama acak dari urutan kursi
+                String rnd = kingOrder.get((int) (Math.random() * kingOrder.size()));
+                for (Player p : players) {
+                    if (!p.isOnline()) continue;
+                    p.sendTitle("§6Memilih Raja...", "§f" + rnd, 0, 10, 0);
+                    p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
+                }
+                ticks++;
+            }
+        }.runTaskTimer(plugin, 0L, 2L);
     }
 
     // ===== ROLE DESCRIPTION =====
@@ -726,6 +1078,9 @@ public class GameManager {
         List<Player> activePlayers = getOnlinePlayers();
         if (activePlayers.size() < 5) { initiator.sendMessage(Component.text("Minimal 5 player!", NamedTextColor.RED)); return; }
         if (activePlayers.size() > PLAYER_SLAB_POSITIONS.length) { initiator.sendMessage(Component.text("Terlalu banyak player!", NamedTextColor.RED)); return; }
+        for (Player p : activePlayers) {
+            p.getInventory().clear();
+        }
         gameRunning = true;
         World world = getGameWorld();
 
@@ -910,8 +1265,15 @@ public class GameManager {
         lockedPitch.clear();
         movementLocked.clear();
 
+        // Reset King state
+        kingOrder.clear();
+        currentKingIndex = -1;
+        currentMission   = 1;
+        teamSelectionSessions.clear();
+
         // Clear effect reveal + turunkan semua player dari seat
         for (Player p : getOnlinePlayers()) {
+            p.getInventory().clear();
             clearRevealEffects(p);
 
             unlockCamera(p);

@@ -5,6 +5,7 @@ package id.avalon;
 import id.avalon.commands.*;
 import id.avalon.listeners.CustomRoleListener;
 import id.avalon.listeners.CutsceneListener;
+import id.avalon.listeners.TeamSelectionListener;
 import org.bukkit.Bukkit;
 import id.avalon.managers.GameManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -32,6 +33,14 @@ public class AvalonPlugin extends JavaPlugin {
         );
         Bukkit.getPluginManager().registerEvents(
             new CustomRoleListener(gameManager),
+            this
+        );
+        Bukkit.getPluginManager().registerEvents(
+            new TeamSelectionListener(gameManager),
+            this
+        );
+        Bukkit.getPluginManager().registerEvents(
+            new id.avalon.listeners.TeamBookListener(gameManager),
             this
         );
 
