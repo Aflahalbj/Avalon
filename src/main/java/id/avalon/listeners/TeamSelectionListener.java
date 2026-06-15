@@ -6,6 +6,8 @@ import id.avalon.managers.GameManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -13,7 +15,15 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.entity.EntityType;
+import org.bukkit.util.Vector;
 
+import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,10 +40,57 @@ public class TeamSelectionListener implements Listener {
 
     private final GameManager gameManager;
     private final Plugin plugin;
+    private final Map<UUID, List<ArmorStand>> floatingHeads = new HashMap<>();
+    private final Map<ArmorStand, Location> headBaseLocations = new HashMap<>();
+    private final Map<ArmorStand, Double> headPhases = new HashMap<>();
 
     public TeamSelectionListener(GameManager gameManager) {
         this.gameManager = gameManager;
         this.plugin = AvalonPlugin.getInstance();
+
+        new BukkitRunnable() {
+
+            double tick = 0;
+
+            @Override
+            public void run() {
+
+                tick += 0.25;
+
+                int index = 0;
+
+                for (Map.Entry<ArmorStand, Location> entry : headBaseLocations.entrySet()) {
+
+                    ArmorStand stand = entry.getKey();
+
+                    if (stand == null || stand.isDead())
+                        continue;
+
+                    Location base = entry.getValue();
+
+                    double phase =
+                        headPhases.getOrDefault(
+                                stand,
+                                0.0
+                        );
+
+                    double offsetY =
+                            Math.sin(tick + phase) * 0.03;
+
+                    Location loc = base.clone();
+                    loc.add(0, offsetY, 0);
+
+                    loc.setYaw(
+                            stand.getLocation().getYaw() + 1.5f
+                    );
+
+                    stand.teleport(loc);
+
+                    index++;
+                }
+            }
+
+        }.runTaskTimer(plugin, 0L, 1L);
     }
 
     @EventHandler
@@ -104,6 +161,7 @@ public class TeamSelectionListener implements Listener {
             // Update confirm button
             updateConfirmButton(inv, teamSize, gui);
             syncSession(player, inv, teamSize);
+            updateFloatingHeads(player, inv, teamSize);
             player.playSound(player.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_BELL, 1.0f, 1.0f);
             return;
         }
@@ -132,6 +190,7 @@ public class TeamSelectionListener implements Listener {
             // Update confirm button
             updateConfirmButton(inv, teamSize, gui);
             syncSession(player, inv, teamSize);
+            updateFloatingHeads(player, inv, teamSize);
             player.playSound(player.getLocation(), org.bukkit.Sound.UI_BUTTON_CLICK, 1.0f, 1.0f);
         }
     }
@@ -245,5 +304,107 @@ public class TeamSelectionListener implements Listener {
     private void syncSession(Player player, Inventory inv, int teamSize) {
         List<String> selected = collectSelectedPlayers(inv, teamSize);
         gameManager.setTeamSelectionSession(player, selected);
+    }
+
+    private void updateFloatingHeads(Player king, Inventory inv, int teamSize) {
+
+        List<ArmorStand> old = floatingHeads.remove(king.getUniqueId());
+
+        if (old != null) {
+            old.forEach(ArmorStand::remove);
+        }
+
+        List<String> selected = collectSelectedPlayers(inv, teamSize);
+
+        if (selected.isEmpty())
+            return;
+
+        World world = king.getWorld();
+
+        Location center = king.getLocation().clone().add(0, 1.5, 0);
+
+        Location base = new Location(
+                world,
+                7.5,
+                74,
+                -378.5
+        );
+
+        Vector forward = base.toVector()
+                .subtract(king.getLocation().toVector())
+                .setY(0)
+                .normalize();
+
+        Vector right = new Vector(
+                -forward.getZ(),
+                0,
+                forward.getX()
+        );
+
+        double spacing = 0.75;
+
+        List<ArmorStand> spawned = new ArrayList<>();
+
+        double start = -(selected.size() - 1) / 2.0;
+
+        for (int i = 0; i < selected.size(); i++) {
+
+            String playerName = selected.get(i);
+
+            Location pos = center.clone().add(
+                    right.clone().multiply((start + i) * spacing)
+            );
+
+            Location standLoc = pos.clone();
+            standLoc.setDirection(forward);
+
+            ArmorStand stand = (ArmorStand) world.spawnEntity(
+                    standLoc,
+                    EntityType.ARMOR_STAND
+            );
+
+            stand.setInvisible(true);
+            stand.setGravity(false);
+            stand.setMarker(true);
+            stand.setSmall(true);
+
+            ItemStack skull = new TeamSelectionGUI(plugin)
+                    .makePlayerHead(playerName);
+
+            stand.getEquipment().setHelmet(skull);
+
+            spawned.add(stand);
+
+            headBaseLocations.put(
+                    stand,
+                    stand.getLocation().clone()
+            );
+            double phase = (i % 2 == 0)
+                    ? 0
+                    : Math.PI;
+
+            headPhases.put(stand, phase);
+        }
+
+        floatingHeads.put(
+                king.getUniqueId(),
+                spawned
+        );
+    }
+
+    public void clearAllFloatingHeads() {
+
+        for (List<ArmorStand> stands : floatingHeads.values()) {
+
+            for (ArmorStand stand : stands) {
+
+                if (stand != null && !stand.isDead()) {
+                    stand.remove();
+                }
+            }
+        }
+
+        floatingHeads.clear();
+        headBaseLocations.clear();
     }
 }

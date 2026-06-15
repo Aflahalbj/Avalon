@@ -14,29 +14,32 @@ public class AvalonPlugin extends JavaPlugin {
 
     private static AvalonPlugin instance;
     private GameManager gameManager;
-
+    private TeamSelectionListener teamSelectionListener;
+    
     //@Override
     // public void onLoad() {
     //     PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
     //     PacketEvents.getAPI().load();
     // }
-
+    
     @Override
     public void onEnable() {
         instance = this;
         // PacketEvents.getAPI().init();
-
+            
         gameManager = new GameManager(this);
+        teamSelectionListener = new TeamSelectionListener(gameManager);
+
+        getServer().getPluginManager().registerEvents(
+                teamSelectionListener,
+                this
+        );
         Bukkit.getPluginManager().registerEvents(
             new CutsceneListener(gameManager),
             this
         );
         Bukkit.getPluginManager().registerEvents(
             new CustomRoleListener(gameManager),
-            this
-        );
-        Bukkit.getPluginManager().registerEvents(
-            new TeamSelectionListener(gameManager),
             this
         );
         Bukkit.getPluginManager().registerEvents(
@@ -69,6 +72,15 @@ public class AvalonPlugin extends JavaPlugin {
         getLogger().info("Avalon plugin disabled!");
     }
 
-    public static AvalonPlugin getInstance() { return instance; }
-    public GameManager getGameManager() { return gameManager; }
+    public static AvalonPlugin getInstance() {
+        return instance;
+    }
+
+    public GameManager getGameManager() {
+        return gameManager;
+    }
+
+    public TeamSelectionListener getTeamSelectionListener() {
+        return teamSelectionListener;
+    }
 }

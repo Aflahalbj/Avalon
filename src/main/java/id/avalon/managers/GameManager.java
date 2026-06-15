@@ -1246,6 +1246,9 @@ public class GameManager {
     }
 
     public void cleanup() {
+        AvalonPlugin.getInstance()
+                .getTeamSelectionListener()
+                .clearAllFloatingHeads();
         // Hentikan semua task aktif
         if (cutsceneTask != null)       { cutsceneTask.cancel();       cutsceneTask = null; }
         if (countdownTask != null)      { countdownTask.cancel();      countdownTask = null; }
