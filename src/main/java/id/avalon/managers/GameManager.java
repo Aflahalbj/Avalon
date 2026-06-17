@@ -15,7 +15,9 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.EulerAngle;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.*;
@@ -38,6 +40,10 @@ public class GameManager {
     private BukkitTask countdownTask;
     // Task countdown reveal — supaya bisa di-cancel saat /stopgame
     private BukkitTask revealCountdownTask;
+    // Task action bar "Menunggu raja memilih tim"
+    private BukkitTask teamSelectionActionBarTask;
+    // VotingManager — diinisialisasi setelah plugin siap
+    private VotingManager votingManager;
 
     private final Map<UUID, Float> lockedYaw   = new HashMap<>();
     private final Map<UUID, Float> lockedPitch = new HashMap<>();
@@ -51,8 +57,28 @@ public class GameManager {
     private int currentKingIndex = -1;
     /** Misi yang sedang berjalan (1-5). */
     private int currentMission = 1;
+    private int currentRound = 1;
+    private int evilMissionFails = 0;
     /** Session pemilihan tim per Raja (UUID raja -> list nama yang sudah dipilih). */
     private final Map<UUID, List<String>> teamSelectionSessions = new HashMap<>();
+
+    // ── Mission state ─────────────────────────────────────────────────────────
+    /** Task untuk sabotage mechanic (45s timer). */
+    private BukkitTask sabotageTimerTask;
+    /** Task untuk actionbar kubu jahat di fase misi. */
+    private BukkitTask missionEvilActionBarTask;
+    /** Apakah misi sudah berakhir (dicegah double-finish). */
+    private boolean missionActive = false;
+    /** Tim yang sedang menjalankan misi (nama player). */
+    private List<String> currentMissionTeam = new ArrayList<>();
+    /** Koordinat blok tanaman misi saat ini (untuk cek proximity sabotage). */
+    private Location missionPlantLocation = null;
+    /** Task proximity checker (player mendekat tanaman → trigger end). */
+    private BukkitTask proximityTask;
+    /** Apakah misi ini sudah disabotase. */
+    private boolean missionSabotaged = false;
+    /** Task countdown end-mission. */
+    private BukkitTask endMissionCountdownTask;
 
     // ── Koordinat ────────────────────────────────────────────────────────────
 
@@ -76,9 +102,30 @@ public class GameManager {
     private static final int BASE_Y = 74;
     private static final int BASE_Z = -379;
 
+    // ── Koordinat sabotage blok (Rule 4) ─────────────────────────────────────
+    private static final int SABOTAGE_BLOCK_X = -40;
+    private static final int SABOTAGE_BLOCK_Y = 67;
+    private static final int SABOTAGE_BLOCK_Z = -119;
+
+    // ── Koordinat deposit ───────────────────────────────────────────
+    private static final double DEPOSIT_X = 4.2;
+    private static final double DEPOSIT_Y = 74.3;
+    private static final double DEPOSIT_Z = -376.9;
+
+    private static final float DEPOSIT_YAW = -116f;
+    private static final float DEPOSIT_PITCH = -15.4f;
+
     // ── Constructor ──────────────────────────────────────────────────────────
 
     public AvalonPlugin getPlugin() { return plugin; }
+
+    public void setVotingManager(VotingManager votingManager) {
+        this.votingManager = votingManager;
+    }
+
+    public VotingManager getVotingManager() {
+        return votingManager;
+    }
 
     public GameManager(AvalonPlugin plugin) {
         this.plugin = plugin;
@@ -140,6 +187,7 @@ public class GameManager {
     public boolean isCutsceneRunning()              { return cutsceneRunning; }
     public boolean isGameRunning()                  { return gameRunning; }
     public void setGameRunning(boolean v)           { this.gameRunning = v; }
+    public boolean isMissionActive()                { return missionActive; }
 
     /** Dipakai CutsceneListener untuk memutuskan apakah eject dari seat diizinkan. */
     public boolean isRevealPhaseActive()            { return revealPhaseActive; }
@@ -203,8 +251,12 @@ public class GameManager {
      * Dipanggil setelah satu giliran selesai.
      */
     public void rotateKing() {
-        if (kingOrder.isEmpty()) return;
-        currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
+        // if (kingOrder.isEmpty()) return;
+        // currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
+        // teamSelectionSessions.clear();
+        // announceKing();
+        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
+        currentKingIndex = kingOrder.indexOf("itslyricss");
         teamSelectionSessions.clear();
         announceKing();
     }
@@ -224,7 +276,7 @@ public class GameManager {
                 .append(Component.text(kingName, NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
         );
         broadcast(
-            Component.text("  Misi ke-" + currentMission + " | Gunakan Buku Pemilihan Tim (klik kanan) untuk memilih anggota tim.", NamedTextColor.GRAY)
+            Component.text("  Misi ke-" + currentRound + " | Gunakan Buku Pemilihan Tim (klik kanan) untuk memilih anggota tim.", NamedTextColor.GRAY)
         );
         broadcast(
             Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD)
@@ -235,11 +287,50 @@ public class GameManager {
         if (king != null && king.isOnline()) {
             king.sendTitle(
                 "§6§l👑 KAMU ADALAH RAJA",
-                "§eGunakan Buku Pemilihan Tim untuk memilih tim misi ke-" + currentMission,
+                "§eGunakan Buku Pemilihan Tim untuk memilih tim misi ke-" + currentRound,
                 10, 60, 20
             );
             king.playSound(king.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
             giveTeamBook(king);
+        }
+
+        // Mulai action bar "Menunggu raja memilih tim"
+        startTeamSelectionActionBar(kingName);
+    }
+
+    /**
+     * Mulai action bar berulang "Menunggu raja memilih tim" untuk semua player
+     * selama fase pemilihan tim berlangsung.
+     */
+    private void startTeamSelectionActionBar(String kingName) {
+        stopTeamSelectionActionBar();
+
+        teamSelectionActionBarTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!gameRunning) { cancel(); return; }
+
+                Component bar = Component.text("👑 ", NamedTextColor.GOLD)
+                    .append(Component.text("Menunggu ", NamedTextColor.YELLOW))
+                    .append(Component.text(kingName, NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" memilih tim...", NamedTextColor.YELLOW));
+
+                for (Player p : getOnlinePlayers()) {
+                    if (p.isOnline()) p.sendActionBar(bar);
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    /** Hentikan action bar "Menunggu raja memilih tim". */
+    public void stopTeamSelectionActionBar() {
+        if (teamSelectionActionBarTask != null) {
+            teamSelectionActionBarTask.cancel();
+            teamSelectionActionBarTask = null;
+        }
+        // Clear actionbar di semua player
+        for (Player p : getOnlinePlayers()) {
+            if (p.isOnline()) p.sendActionBar(Component.text(" "));
         }
     }
 
@@ -345,10 +436,13 @@ public class GameManager {
         removeTeamBook(king);
         king.playSound(king.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
 
+        // Hentikan action bar "Menunggu raja memilih tim"
+        stopTeamSelectionActionBar();
+
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
         broadcast(
-            Component.text("  ⚔ Tim Misi ke-" + currentMission + " telah dipilih!", NamedTextColor.AQUA)
+            Component.text("  ⚔ Tim Misi ke-" + currentRound + " telah dipilih!", NamedTextColor.AQUA)
                 .decorate(TextDecoration.BOLD)
         );
         broadcast(
@@ -367,7 +461,7 @@ public class GameManager {
         );
 
         int playerCount = registeredPlayers.size();
-        if (id.avalon.gui.TeamSelectionGUI.requiresTwoFails(playerCount, currentMission)) {
+        if (id.avalon.gui.TeamSelectionGUI.requiresTwoFails(playerCount, currentRound)) {
             broadcast(
                 Component.text("  ⚠ Misi ini butuh 2 Fail untuk digagalkan!", NamedTextColor.RED)
                     .decorate(TextDecoration.ITALIC)
@@ -376,6 +470,20 @@ public class GameManager {
 
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
         broadcast(Component.text(" "));
+
+        // Mulai fase voting setelah 2 detik
+        final List<String> teamFinal = new ArrayList<>(team);
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (!gameRunning) return;
+                    if (votingManager != null) {
+                        votingManager.startVoting(teamFinal);
+                    }
+                }
+            }.runTaskLater(plugin, 40L)
+        );
     }
 
     // ===== CAMERA LOCK =====
@@ -429,8 +537,6 @@ public class GameManager {
             p.getLocation().getX(),
             p.getLocation().getZ()
         );
-        // setRotation langsung set yaw/pitch client tanpa butuh PlayerMoveEvent,
-        // dan bekerja saat player sedang jadi passenger ArmorStand.
         p.setRotation(yaw, 90f);
         lockCamera(p, yaw, 90f);
         applyRevealEffects(p);
@@ -870,16 +976,11 @@ public class GameManager {
         teamSelectionSessions.clear();
         currentMission = 1;
 
-        // Bangun map: nama player → index kursinya (sesuai urutan regis / placeSlabsAndSeat)
-        // players sudah terurut sesuai registeredPlayers, index kursi = index di list ini
         Map<String, Integer> seatIndex = new HashMap<>();
         for (int i = 0; i < players.size(); i++) {
             seatIndex.put(players.get(i).getName(), i);
         }
 
-        // Hitung angle searah jarum jam tiap seat terhadap pusat meja
-        // Minecraft: X = Timur, Z = Selatan; searah jarum jam dari atas = atan2(dX, dZ)
-        // (Utara=0°, Timur=90°, Selatan=180°, Barat=270°)
         List<String> sorted = new ArrayList<>();
         for (Player p : players) sorted.add(p.getName());
 
@@ -888,10 +989,8 @@ public class GameManager {
             int idxB = seatIndex.getOrDefault(b, 0);
             int[] posA = PLAYER_SLAB_POSITIONS[idxA];
             int[] posB = PLAYER_SLAB_POSITIONS[idxB];
-            // dX = pos[0] (offset dari BASE_X), dZ = pos[1] (offset dari BASE_Z)
             double angleA = Math.toDegrees(Math.atan2(posA[0], posA[1]));
             double angleB = Math.toDegrees(Math.atan2(posB[0], posB[1]));
-            // Normalise ke [0, 360)
             if (angleA < 0) angleA += 360;
             if (angleB < 0) angleB += 360;
             return Double.compare(angleB, angleA);
@@ -899,16 +998,15 @@ public class GameManager {
 
         // Pilih Raja pertama secara acak
         // int randomStart = (int) (Math.random() * sorted.size());
-        // DEBUG
+        // DEBUG — (KODE ASLI JANGAN DIHAPUS!)
         int randomStart = sorted.indexOf("itslyricss");
-        // Rotasi list sehingga raja pertama ada di depan, sisanya tetap searah jarum jam
         for (int i = 0; i < sorted.size(); i++) {
             kingOrder.add(sorted.get((randomStart + i) % sorted.size()));
         }
 
         currentKingIndex = 0;
         // String kingName = kingOrder.get(0);
-        // DEBUG
+        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
         String kingName = "itslyricss";
 
         broadcast(Component.text(" "));
@@ -917,7 +1015,6 @@ public class GameManager {
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
         broadcast(Component.text(" "));
 
-        // Animasi kocok — 40 ticks × 2 tick interval = 80 ticks = 4 detik
         new BukkitRunnable() {
             int ticks = 0;
 
@@ -928,14 +1025,12 @@ public class GameManager {
                 if (ticks >= 40) {
                     cancel();
 
-                    // ── Reveal Raja ──
                     for (Player p : players) {
                         if (!p.isOnline()) continue;
 
                         boolean isKingPlayer = p.getName().equals(kingName);
 
                         if (isKingPlayer) {
-                            // Title khusus untuk Raja
                             p.sendTitle(
                                 "§6§l👑 KAMU ADALAH RAJA",
                                 "§eKlik kanan §bBuku Pemilihan Tim §euntuk memilih anggota tim!",
@@ -944,7 +1039,6 @@ public class GameManager {
                             p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
                             giveTeamBook(p);
                         } else {
-                            // Title untuk player lain
                             p.sendTitle(
                                 "§6§l👑 RAJA TELAH DIPILIH",
                                 "§e" + kingName + " §fadalah Raja Misi 1",
@@ -953,7 +1047,6 @@ public class GameManager {
                             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.2f);
                         }
 
-                        // Info ke chat
                         p.sendMessage(Component.text(" "));
                         p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
                         p.sendMessage(
@@ -986,14 +1079,14 @@ public class GameManager {
                         p.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
                         p.sendMessage(Component.text(" "));
                     }
+                    startTeamSelectionActionBar(kingName);
                     return;
                 }
 
-                // Frame kocok — tampilkan nama acak dari urutan kursi
                 String rnd = kingOrder.get((int) (Math.random() * kingOrder.size()));
                 for (Player p : players) {
                     if (!p.isOnline()) continue;
-                    p.sendTitle("§6Memilih Raja...", "§f" + rnd, 0, 10, 0);
+                    p.sendTitle("§6Mengocok Raja...", "§f" + rnd, 0, 10, 0);
                     p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
                 }
                 ticks++;
@@ -1121,6 +1214,7 @@ public class GameManager {
             p.setGameMode(GameMode.SPECTATOR);
             p.teleport(new Location(world, SPECTATOR_X, SPECTATOR_Y, SPECTATOR_Z, SPECTATOR_YAW, SPECTATOR_PITCH));
             lockCamera(p, SPECTATOR_YAW, SPECTATOR_PITCH);
+            lockMovement(p);
         }
         Component[] lines = {
             Component.text("Sudah satu bulan lamanya pak fred tidak sadarkan diri", NamedTextColor.YELLOW),
@@ -1137,7 +1231,10 @@ public class GameManager {
             public void run() {
                 if (index >= lines.length) {
                     cancel(); cutsceneRunning = false;
-                    for (Player p : getOnlinePlayers()) unlockCamera(p);
+                    for (Player p : getOnlinePlayers()) {
+                        unlockMovement(p);
+                        unlockCamera(p);
+                    }
                     delayedTasks.add(
                         new BukkitRunnable() {
                             @Override public void run() { startGamePhase(getOnlinePlayers()); }
@@ -1162,6 +1259,7 @@ public class GameManager {
         broadcast(Component.text("  🤫 GAME DIMULAI 🤫", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
         broadcast(Component.text("  Jaga & bantu merlin mendapatkan 3 tanaman untuk menang!", NamedTextColor.YELLOW));
         broadcast(Component.text("  Jangan biarkan kubu jahat menggagalkan misi!", NamedTextColor.RED));
+        broadcast(Component.text("  Plugin By ", NamedTextColor.GREEN).append(Component.text("Aflahal", NamedTextColor.WHITE).decorate(TextDecoration.BOLD)));
         broadcast(Component.text(" "));
         broadcast(Component.text("═══════════════════════", NamedTextColor.GOLD));
 
@@ -1222,6 +1320,821 @@ public class GameManager {
         }
     }
 
+    // ===== MISSION PHASE =====
+
+    /**
+     * Mendapatkan material tanaman berdasarkan nomor misi.
+     * Rule 3: Misi 1 = Pitcher Plant, Misi 2 = Torchflower, Misi 3 = Cactus
+     * Jika misi ke-2 ronde pertama gagal → misi pertama ronde 2 pakai Pitcher Plant lagi.
+     * Mapping: currentMission 1→PitcherPlant, 2→Torchflower, 3→Cactus, 4→Torchflower, 5→Cactus
+     */
+    private Material getMissionPlant(int mission) {
+        return switch (mission) {
+            case 1 -> Material.PITCHER_PLANT;
+            case 2 -> Material.TORCHFLOWER;
+            case 3 -> Material.CACTUS_FLOWER;
+            default -> Material.PITCHER_PLANT;
+        };
+    }
+
+    /**
+     * Buat item Shears dengan nama sesuai kubu.
+     * Rule 3: Kubu Baik = "Gunting", Kubu Jahat = "Sabotase"
+     */
+    private ItemStack makeShears(Player player) {
+        ItemStack shears = new ItemStack(Material.SHEARS);
+
+        ItemMeta meta = shears.getItemMeta();
+        Role role = getRole(player);
+        boolean isEvil = role != null && role.isEvil();
+        if (isEvil) {
+            meta.displayName(Component.text("Sabotase", NamedTextColor.RED).decorate(TextDecoration.BOLD));
+        } else {
+            meta.displayName(Component.text("Gunting", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
+        }
+        shears.setItemMeta(meta);
+        return shears;
+    }
+
+    /**
+     * Cek apakah item adalah shears misi (Gunting / Sabotase).
+     */
+    public boolean isMissionShears(ItemStack item) {
+        if (item == null || item.getType() != Material.SHEARS) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null || !meta.hasDisplayName()) return false;
+        // Cek displayName mengandung "Gunting" atau "Sabotase"
+        String plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+            .serialize(meta.displayName());
+        return plain.equals("Gunting") || plain.equals("Sabotase");
+    }
+    public boolean isMissionPlant(ItemStack item) {
+        if (item == null) return false;
+
+        return item.getType() == Material.PITCHER_PLANT
+                || item.getType() == Material.TORCHFLOWER
+                || item.getType() == Material.CACTUS_FLOWER;
+    }
+
+    /**
+     * Cek apakah item adalah Sabotase shears.
+     */
+    public boolean isSabotaseShears(ItemStack item) {
+        if (item == null || item.getType() != Material.SHEARS) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null || !meta.hasDisplayName()) return false;
+        String plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+            .serialize(meta.displayName());
+        return plain.equals("Sabotase");
+    }
+
+    /**
+     * Dipanggil VotingManager saat voting berhasil.
+     * Implementasi lengkap fase misi.
+     *
+     * Rule 2: Player tak terpilih → Unseat + Spectator.
+     *         Player terpilih → Adventure + Slowness 1 + Shears di hotbar 1.
+     * Rule 3: Item per misi + rename Shears.
+     * Rule 4: Sabotage mechanic untuk kubu jahat.
+     * Rule 5: End mission & teleport.
+     */
+    public void startMissionPhase(List<String> team) {
+        if (!gameRunning) return;
+        missionActive   = true;
+        missionSabotaged = false;
+        currentMissionTeam = new ArrayList<>(team);
+
+        World world = getGameWorld();
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.LIGHT_PURPLE));
+        broadcast(
+            Component.text("  ⚔ FASE MISI ke-" + currentRound + " DIMULAI!", NamedTextColor.LIGHT_PURPLE)
+                .decorate(TextDecoration.BOLD)
+        );
+        broadcast(
+            Component.text("  Anggota tim: ", NamedTextColor.WHITE)
+                .append(Component.text(String.join(", ", team), NamedTextColor.GREEN)
+                    .decorate(TextDecoration.BOLD))
+        );
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.LIGHT_PURPLE));
+        broadcast(Component.text(" "));
+
+        // ── Taruh tanaman di koordinat misi ──────────────────────────────────
+        Material plantMaterial = getMissionPlant(currentMission);
+
+        if (plantMaterial == Material.PITCHER_PLANT) {
+
+            world.getBlockAt(
+                SABOTAGE_BLOCK_X,
+                SABOTAGE_BLOCK_Y,
+                SABOTAGE_BLOCK_Z
+            ).setBlockData(
+                Bukkit.createBlockData("minecraft:pitcher_plant[half=lower]")
+            );
+
+            world.getBlockAt(
+                SABOTAGE_BLOCK_X,
+                SABOTAGE_BLOCK_Y + 1,
+                SABOTAGE_BLOCK_Z
+            ).setBlockData(
+                Bukkit.createBlockData("minecraft:pitcher_plant[half=upper]")
+            );
+
+        } else {
+
+            world.getBlockAt(
+                SABOTAGE_BLOCK_X,
+                SABOTAGE_BLOCK_Y,
+                SABOTAGE_BLOCK_Z
+            ).setType(plantMaterial);
+
+        }
+
+        missionPlantLocation = new Location(world,
+            SABOTAGE_BLOCK_X + 0.5, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z + 0.5);
+
+        for (String playerName : getRegisteredPlayers()) {
+            Player p = Bukkit.getPlayerExact(playerName);
+            if (p == null || !p.isOnline()) continue;
+
+            boolean inTeam = team.contains(playerName);
+
+            if (!inTeam) {
+                // ── Player tak terpilih → Unseat + Spectator ─────────────────
+                unseatPlayer(p);
+                p.setGameMode(GameMode.SPECTATOR);
+                p.sendMessage(Component.text("  Kamu tidak terpilih dalam misi ini. Mode penonton.", NamedTextColor.GRAY));
+            } else {
+                // ── Player terpilih → Adventure + Slowness 1 + Shears ────────
+                unseatPlayer(p);
+                p.setGameMode(GameMode.SURVIVAL);
+
+                // Slowness 1 (amplifier=0 = level 1), tanpa efek/ikon
+                p.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, Integer.MAX_VALUE, 0, false, false, false));
+
+                // Hanya shears di hotbar — tanaman ada di dunia, bukan inventory
+                p.getInventory().clear();
+                ItemStack shears = makeShears(p);
+                p.getInventory().setItem(0, shears);
+                p.getInventory().setHeldItemSlot(0);
+
+                Role role = getRole(p);
+                boolean isEvil = role != null && role.isEvil();
+
+                p.sendMessage(Component.text(" "));
+                p.sendMessage(Component.text("  🌿 Misi ke-" + currentRound + " dimulai!", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
+                if (isEvil) {
+                    p.sendMessage(Component.text("  Gunakan Sabotase (klik kanan) untuk mengganti tanaman jadi dead bush!", NamedTextColor.RED));
+                } else {
+                    p.sendMessage(Component.text("  Hancurkan tanaman di lokasi misi dengan Gunting untuk menyelesaikan misi.", NamedTextColor.YELLOW));
+                }
+                p.sendMessage(Component.text(" "));
+            }
+        }
+
+        // ── Lock hotbar untuk team member (supaya selalu pegang shears) ───────
+        startHotbarLock(team);
+
+        // ── Sabotage mechanic (actionbar + timer 45 detik) ───────────────────
+        startSabotageMechanic(team, world);
+
+        // ── Block checker: pantau block di koor misi ─────────────────────────
+        startMissionBlockChecker(team, world);
+    }
+
+    /**
+     * Keluarkan player dari seat tanpa animasi reveal.
+     */
+    private void unseatPlayer(Player p) {
+        revealPhaseActive = true;
+        Entity vehicle = p.getVehicle();
+        if (vehicle != null) vehicle.eject();
+        revealPhaseActive = false;
+
+        clearRevealEffects(p);
+        unlockCamera(p);
+        unlockMovement(p);
+    }
+
+    // ── Hotbar Lock ───────────────────────────────────────────────────────────
+
+    private BukkitTask hotbarLockTask;
+
+    /**
+     * Setiap tick, paksa team member kembali ke slot 0 (Shears).
+     * Rule 2: "tidak bisa pindah hotbar biar megang shears terus"
+     */
+    private void startHotbarLock(List<String> team) {
+        stopHotbarLock();
+        hotbarLockTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!missionActive || !gameRunning) { cancel(); return; }
+                for (String name : team) {
+                    Player p = Bukkit.getPlayerExact(name);
+                    if (p == null || !p.isOnline()) continue;
+                    if (p.getInventory().getHeldItemSlot() != 0) {
+                        p.getInventory().setHeldItemSlot(0);
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    private void stopHotbarLock() {
+        if (hotbarLockTask != null) {
+            hotbarLockTask.cancel();
+            hotbarLockTask = null;
+        }
+    }
+
+    // ── Sabotage Mechanic ─────────────────────────────────────────────────────
+
+    /**
+     * Rule 4: Kubu Jahat punya 45 detik untuk sabotase.
+     * - Actionbar jahat: "Klik kanan untuk sabotase | Biarkan saja untuk menyamar"
+     * - Setelah 45 detik → misi sukses (tidak bisa sabotase lagi)
+     * - Trigger sabotase: lihat MissionListener (klik kanan shears "Sabotase")
+     */
+    private void startSabotageMechanic(List<String> team, World world) {
+        stopSabotageMechanic();
+
+        // Actionbar jahat
+        missionEvilActionBarTask = new BukkitRunnable() {
+
+            @Override
+            public void run() {
+                if (!missionActive || !gameRunning) { cancel(); return; }
+
+                for (String name : team) {
+                    Player p = Bukkit.getPlayerExact(name);
+                    if (p == null || !p.isOnline()) continue;
+                    Role role = getRole(p);
+                    if (role != null && role.isEvil()) {
+                        // Rule 4: Actionbar Jahat
+                        if (missionSabotaged) {
+
+                            p.sendActionBar(
+                                Component.text("☠ Kamu telah sabotase misi ini", NamedTextColor.RED)
+                                    .decorate(TextDecoration.BOLD)
+                            );
+
+                        } else {
+
+                            p.sendActionBar(
+                                Component.text("🗡 Klik kanan untuk sabotase", NamedTextColor.RED)
+                                    .append(Component.text(" | ", NamedTextColor.GRAY))
+                                    .append(Component.text("Biarkan saja untuk menyamar", NamedTextColor.YELLOW))
+                            );
+
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    private void stopSabotageMechanic() {
+        if (missionEvilActionBarTask != null) {
+            missionEvilActionBarTask.cancel();
+            missionEvilActionBarTask = null;
+        }
+        if (sabotageTimerTask != null) {
+            sabotageTimerTask.cancel();
+            sabotageTimerTask = null;
+        }
+    }
+
+    /**
+     * Dipanggil dari MissionListener saat player klik kanan item "Sabotase".
+     * Ubah blok di koor misi jadi Dead Bush. Block checker yang akan deteksi dan trigger countdown.
+     */
+    public void triggerSabotage(Player player) {
+        if (!missionActive || missionSabotaged) return;
+        Role role = getRole(player);
+        if (role == null || !role.isEvil()) return;
+
+        missionSabotaged = true;
+
+        World world = getGameWorld();
+        if (world != null) {
+            world.getBlockAt(SABOTAGE_BLOCK_X, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z)
+                .setType(Material.DEAD_BUSH);
+            world.getBlockAt(
+                SABOTAGE_BLOCK_X,
+                SABOTAGE_BLOCK_Y + 1,
+                SABOTAGE_BLOCK_Z
+            ).setType(Material.AIR);
+        }
+
+        player.sendMessage(Component.text(" "));
+        player.sendMessage(Component.text("  ☠ Kamu berhasil melakukan sabotase!", NamedTextColor.RED).decorate(TextDecoration.BOLD));
+        player.sendMessage(Component.text(" "));
+        // Block checker akan mendeteksi dead_bush + proximity dan memanggil triggerSabotageCountdown()
+    }
+
+    /**
+     * Dipanggil oleh block checker saat sabotase terdeteksi dan ada player dalam 10 blok.
+     * Tampilkan pesan + countdown 20 detik → teleport semua player ke seat.
+     */
+    public void triggerSabotageCountdown() {
+        if (!missionActive) return;
+        missionActive = false;
+        stopHotbarLock();
+        stopSabotageMechanic();
+        stopProximityChecker();
+
+        // Reset slowness
+        for (String name : currentMissionTeam) {
+            Player p = Bukkit.getPlayerExact(name);
+            if (p != null && p.isOnline()) p.removePotionEffect(PotionEffectType.SLOWNESS);
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  ☠ Misi telah di sabotase!", NamedTextColor.RED).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Kembali lagi nanti", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  Kamu akan diteleport kembali dalam 20 detik", NamedTextColor.GRAY));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text(" "));
+
+        for (Player p : getOnlinePlayers()) {
+            p.setGameMode(GameMode.ADVENTURE);
+        }
+
+        endMissionCountdownTask = new BukkitRunnable() {
+            int seconds = 20;
+
+            @Override
+            public void run() {
+                if (!gameRunning) { cancel(); return; }
+                if (seconds <= 0) {
+                    cancel();
+                    teleportAllToSeat();
+                    onMissionFailed();
+                    return;
+                }
+                for (Player p : getOnlinePlayers()) {
+                    if (p.isOnline()) {
+                        p.sendActionBar(
+                            Component.text("💀 Kembali ke arena dalam ", NamedTextColor.RED)
+                                .append(Component.text(seconds + "s", NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
+                        );
+                    }
+                }
+                seconds--;
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    // ── Proximity Checker ─────────────────────────────────────────────────────
+
+    /**
+     * Cek setiap tick:
+     * - Blok tanaman hancur (AIR) → misi sukses
+     * - Blok berubah jadi DEAD_BUSH (sabotase) + ada player dalam 10 blok → mulai countdown 20 detik teleport
+     */
+    private void startMissionBlockChecker(List<String> team, World world) {
+        stopProximityChecker();
+        if (missionPlantLocation == null) return;
+
+        final Material[] originalPlant = { getMissionPlant(currentMission) };
+        // Track apakah countdown sabotase sudah dimulai (agar tidak dobel)
+        final boolean[] sabotageCountdownStarted = { false };
+
+        proximityTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!missionActive || !gameRunning) { cancel(); return; }
+
+                org.bukkit.block.Block plantBlock = world.getBlockAt(
+                    SABOTAGE_BLOCK_X, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z);
+                Material current = plantBlock.getType();
+
+                // ── Misi sukses: blok tanaman hancur menjadi AIR ─────────────
+                if (current == Material.AIR && !missionSabotaged) {
+                    cancel();
+                    stopSabotageMechanic();
+                    finishMission(true);
+                    return;
+                }
+
+                // ── Sabotase: blok berubah jadi DEAD_BUSH ────────────────────
+                if (current == Material.DEAD_BUSH && missionSabotaged && !sabotageCountdownStarted[0]) {
+                    // Cek apakah ada player tim dalam radius 10 blok
+                    for (String name : team) {
+                        Player p = Bukkit.getPlayerExact(name);
+                        if (p == null || !p.isOnline()) continue;
+                        if (p.getWorld().equals(world)) {
+                            double dist = p.getLocation().distance(missionPlantLocation);
+                            if (dist <= 10.0) {
+                                sabotageCountdownStarted[0] = true;
+                                cancel();
+                                stopSabotageMechanic();
+                                // Pesan sabotase & countdown 20 detik
+                                triggerSabotageCountdown();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 5L, 5L); // Cek tiap 0.25 detik untuk respons cepat
+    }
+
+    private void stopProximityChecker() {
+        if (proximityTask != null) {
+            proximityTask.cancel();
+            proximityTask = null;
+        }
+    }
+
+    // ── End Mission ───────────────────────────────────────────────────────────
+
+    /**
+     * Akhiri misi sukses (tanaman dihancurkan).
+     * Sabotase ditangani oleh triggerSabotageCountdown().
+     */
+    private void finishMission(boolean success) {
+        if (!missionActive) return;
+        missionActive = false;
+        stopHotbarLock();
+        stopSabotageMechanic();
+        stopProximityChecker();
+
+        // Reset slowness untuk semua team member
+        for (String name : currentMissionTeam) {
+            Player p = Bukkit.getPlayerExact(name);
+            if (p != null && p.isOnline()) {
+                p.removePotionEffect(PotionEffectType.SLOWNESS);
+            }
+        }
+
+        if (success) {
+            broadcast(Component.text(" "));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GREEN));
+            broadcast(Component.text("  ✅ Misi ke-" + currentRound + " berhasil!", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
+            broadcast(Component.text("  Tanaman berhasil dihancurkan oleh tim.", NamedTextColor.YELLOW));
+            broadcast(Component.text("  Kamu akan diteleport kembali dalam 10 detik", NamedTextColor.GRAY));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GREEN));
+            broadcast(Component.text(" "));
+
+            for (Player p : getOnlinePlayers()) {
+                p.setGameMode(GameMode.ADVENTURE);
+            }
+            endMissionCountdownTask = new BukkitRunnable() {
+                int seconds = 10;
+
+                @Override
+                public void run() {
+                    if (!gameRunning) { cancel(); return; }
+                    if (seconds <= 0) {
+                        cancel();
+                        startPlantDepositCutscene();
+                        return;
+                    }
+                    for (Player p : getOnlinePlayers()) {
+                        if (p.isOnline()) {
+                            p.sendActionBar(
+                                Component.text("✅ Kembali ke arena dalam ", NamedTextColor.GREEN)
+                                    .append(Component.text(seconds + "s", NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
+                            );
+                        }
+                    }
+                    seconds--;
+                }
+            }.runTaskTimer(plugin, 0L, 20L);
+        }
+    }
+
+    private void startPlantDepositCutscene() {
+
+        World world = getGameWorld();
+        if (world == null) return;
+
+        Location cameraLoc = new Location(
+            world,
+            5.8,
+            75,
+            -377.5,
+            -115f,
+            51f
+        );
+
+        // Semua player jadi spectator + lock camera
+        for (Player p : getOnlinePlayers()) {
+
+            p.getInventory().clear();
+            p.setGameMode(GameMode.ADVENTURE);
+            p.setAllowFlight(true);
+            p.setFlying(true);
+            p.setInvisible(true);
+            p.teleport(cameraLoc);
+
+            lockMovement(p);
+            lockCamera(
+                p,
+                -115f,
+                51f
+            );
+        }
+
+        ArmorStand stand = world.spawn(
+            new Location(
+                world,
+                8.5,
+                75,
+                -378.5,
+                65f,
+                0f
+            ),
+            ArmorStand.class
+        );
+
+        stand.setVisible(false);
+        stand.setInvisible(true);
+        stand.setGravity(false);
+        stand.setInvulnerable(true);
+        stand.setArms(true);
+        stand.setMarker(true);
+
+        stand.getEquipment().setItemInMainHand(
+            new ItemStack(
+                getMissionPlant(currentMission)
+            )
+        );
+
+        stand.setRightArmPose(
+            new EulerAngle(
+                Math.toRadians(-80),
+                0,
+                Math.toRadians(10)
+            )
+        );
+
+        new BukkitRunnable() {
+
+            double y = 76.0;
+
+            @Override
+            public void run() {
+
+                if (!gameRunning) {
+                    stand.remove();
+                    cancel();
+                    return;
+                }
+
+                y -= 0.1;
+
+                Location l = stand.getLocation();
+                l.setY(y);
+
+                stand.teleport(l);
+
+                if (y <= 73.0) {
+
+                    cancel();
+
+                    // tanaman masuk cauldron
+                    stand.remove();
+
+                    Color particleColor;
+
+                    switch (getMissionPlant(currentMission)) {
+
+                        case PITCHER_PLANT:
+                            particleColor = Color.fromRGB(0, 255, 255); // cyan
+                            break;
+
+                        case TORCHFLOWER:
+                            particleColor = Color.fromRGB(255, 215, 0); // gold
+                            break;
+
+                        case CACTUS_FLOWER:
+                            particleColor = Color.fromRGB(255, 105, 180); // hot pink
+                            break;
+                        default:
+                            particleColor = Color.WHITE;
+                            break;
+                    }
+
+                    world.spawnParticle(
+                        Particle.DUST,
+                        BASE_X + 0.5,
+                        BASE_Y + 0.8,
+                        BASE_Z + 0.5,
+                        60,
+                        new Particle.DustOptions(
+                            particleColor,
+                            2f
+                        )
+                    );
+
+                    // ledakan
+                    world.spawnParticle(
+                        Particle.EXPLOSION,
+                        BASE_X + 0.5,
+                        BASE_Y + 1,
+                        BASE_Z + 0.5,
+                        1
+                    );
+
+                    world.playSound(
+                        new Location(
+                            world,
+                            BASE_X,
+                            BASE_Y,
+                            BASE_Z
+                        ),
+                        Sound.ENTITY_GENERIC_EXPLODE,
+                        1f,
+                        1.2f
+                    );
+
+                    new BukkitRunnable() {
+
+                        @Override
+                        public void run() {
+
+                            teleportAllToSeat();
+
+                            for (Player p : getOnlinePlayers()) {
+                                unlockMovement(p);
+                                unlockCamera(p);
+                                p.setAllowFlight(false);
+                                p.setFlying(false);
+                                p.setInvisible(false);
+                            }
+
+                            onMissionSuccess();
+                        }
+
+                    }.runTaskLater(plugin, 40L);
+                }
+            }
+
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /**
+     * Teleport semua player ke seat (Adventure mode) setelah misi selesai.
+     * Rule 5: All Players → Seat + Adventure
+     */
+    private void teleportAllToSeat(  ) {
+        World world = getGameWorld();
+        if (world == null) return;
+
+        List<Player> players = getOnlinePlayers();
+        for (int i = 0; i < Math.min(players.size(), PLAYER_SLAB_POSITIONS.length); i++) {
+            int[] pos = PLAYER_SLAB_POSITIONS[i];
+            int x = BASE_X + pos[0], z = BASE_Z + pos[1];
+
+            final float yaw = (float) Math.toDegrees(
+                Math.atan2(-((BASE_X + 0.5) - (x + 0.5)), (BASE_Z + 0.5) - (z + 0.5))
+            );
+
+            Player p = players.get(i);
+            p.removePotionEffect(PotionEffectType.SLOWNESS);
+            p.getInventory().clear();
+            p.setGameMode(GameMode.ADVENTURE);
+            p.teleport(new Location(world, x + 0.5, BASE_Y, z + 0.5, yaw, 0));
+            p.sendActionBar(Component.text(" "));
+
+            final Player fp = p;
+            final int fx = x, fz = z;
+            delayedTasks.add(
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        if (!gameRunning) return;
+                        ArmorStand seat = world.spawn(
+                            new Location(world, fx + 0.5, BASE_Y + 0.5, fz + 0.5, yaw, 0),
+                            ArmorStand.class, as -> {
+                                as.setVisible(false); as.setGravity(false); as.setInvulnerable(true);
+                                as.setMarker(true); as.setCustomNameVisible(false);
+                                as.addScoreboardTag("avalon_seat");
+                            }
+                        );
+                        seat.setRotation(yaw, 0);
+                        seat.addPassenger(fp);
+                    }
+                }.runTaskLater(plugin, 5L)
+            );
+        }
+    }
+
+    /**
+     * Dipanggil setelah misi gagal (disabotase).
+     * Lanjut ke raja berikutnya, TAPI misi tidak berlanjut (bisa buat track misi gagal).
+     */
+    private void onMissionFailed() {
+
+        evilMissionFails++;
+        currentRound++;
+
+        if (evilMissionFails >= 3) {
+            triggerEvilWin("3 misi telah disabotase");
+            return;
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text(
+            "  ❌ Misi ke-" + (currentRound - 1) + " gagal. Raja berganti.",
+            NamedTextColor.RED
+        ));
+        broadcast(Component.text(" "));
+
+        // Reset reject streak (misi baru = bukan akibat vote reject)
+        if (votingManager != null) votingManager.resetRejectStreak();
+
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (!gameRunning) return;
+                    rotateKing();
+                }
+            }.runTaskLater(plugin, 60L)
+        );
+    }
+
+    /**
+     * Dipanggil setelah misi sukses.
+     * Lanjut ke misi berikutnya.
+     */
+    private void onMissionSuccess() {
+        // Reset reject streak saat misi sukses
+        if (votingManager != null) votingManager.resetRejectStreak();
+
+        currentMission++; // tanaman naik
+        currentRound++;   // ronde naik
+        if (currentMission > 3) {
+            // Kubu baik menang (semua misi selesai)
+            broadcast(Component.text(" "));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+            broadcast(Component.text("  🏆 KUBU BAIK MENANG!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
+            broadcast(Component.text("  Semua misi berhasil diselesaikan!", NamedTextColor.GREEN));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+            broadcast(Component.text(" "));
+            return;
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("  ➡ Lanjut ke Misi ke-" + currentRound + "!", NamedTextColor.YELLOW));
+        broadcast(Component.text(" "));
+
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (!gameRunning) return;
+                    rotateKing();
+                }
+            }.runTaskLater(plugin, 60L)
+        );
+    }
+
+    /**
+     * Dipanggil VotingManager saat kubu jahat menang karena 5x reject.
+     */
+    public void triggerEvilWin(String reason) {
+        if (!gameRunning) return;
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  ☠ KUBU JAHAT MENANG!", NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Alasan: " + reason, NamedTextColor.RED));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text(" "));
+
+        // Reveal siapa saja kubu jahat
+        for (Map.Entry<UUID, Role> entry : playerRoles.entrySet()) {
+            if (entry.getValue().isEvil()) {
+                Player p = Bukkit.getPlayer(entry.getKey());
+                if (p != null) {
+                    broadcast(
+                        Component.text("  🗡 ", NamedTextColor.RED)
+                            .append(Component.text(p.getName(), NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD))
+                            .append(Component.text(" adalah " + entry.getValue().name(), NamedTextColor.RED))
+                    );
+                }
+            }
+        }
+        broadcast(Component.text(" "));
+
+        // Akhiri game setelah 5 detik
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    cleanup();
+                }
+            }.runTaskLater(plugin, 100L)
+        );
+    }
+
     // ===== UTILS =====
 
     private void broadcast(Component message) {
@@ -1250,15 +2163,31 @@ public class GameManager {
                 .getTeamSelectionListener()
                 .clearAllFloatingHeads();
         // Hentikan semua task aktif
-        if (cutsceneTask != null)       { cutsceneTask.cancel();       cutsceneTask = null; }
-        if (countdownTask != null)      { countdownTask.cancel();      countdownTask = null; }
-        if (revealCountdownTask != null){ revealCountdownTask.cancel(); revealCountdownTask = null; }
+        if (cutsceneTask != null)               { cutsceneTask.cancel();               cutsceneTask = null; }
+        if (countdownTask != null)              { countdownTask.cancel();              countdownTask = null; }
+        if (revealCountdownTask != null)        { revealCountdownTask.cancel();        revealCountdownTask = null; }
+        if (teamSelectionActionBarTask != null) { teamSelectionActionBarTask.cancel(); teamSelectionActionBarTask = null; }
+        if (endMissionCountdownTask != null)    { endMissionCountdownTask.cancel();    endMissionCountdownTask = null; }
+
+        stopHotbarLock();
+        stopSabotageMechanic();
+        stopProximityChecker();
+
+        // Cancel voting jika sedang berjalan
+        if (votingManager != null) {
+            votingManager.cancelVoting();
+        }
 
         // Set gameRunning false SEBELUM operasi lain supaya semua BukkitRunnable
         // yang cek gameRunning langsung berhenti di iterasi berikutnya
         gameRunning       = false;
         cutsceneRunning   = false;
         revealPhaseActive = false;
+        missionActive     = false;
+        missionSabotaged  = false;
+        missionPlantLocation = null;
+        currentMissionTeam.clear();
+
         for (BukkitTask task : delayedTasks) {
             task.cancel();
         }
@@ -1272,6 +2201,8 @@ public class GameManager {
         kingOrder.clear();
         currentKingIndex = -1;
         currentMission   = 1;
+        currentRound     = 1;
+        evilMissionFails = 0;
         teamSelectionSessions.clear();
 
         // Clear effect reveal + turunkan semua player dari seat
@@ -1293,6 +2224,7 @@ public class GameManager {
                 revealPhaseActive = false;
                 if (v.getScoreboardTags().contains("avalon_seat")) v.remove();
             }
+            p.removePotionEffect(PotionEffectType.SLOWNESS);
             p.setGameMode(GameMode.ADVENTURE);
         }
 
@@ -1304,6 +2236,7 @@ public class GameManager {
             for (Entity e : gameWorld.getEntities()) {
                 if (e.getScoreboardTags().contains("avalon_seat"))      e.remove();
                 if (e.getScoreboardTags().contains("avalon_mannequin")) e.remove();
+                if (e.getScoreboardTags().contains("avalon_vote_head")) e.remove();
             }
             for (int[] pos : PLAYER_SLAB_POSITIONS)
                 gameWorld.getBlockAt(BASE_X + pos[0], BASE_Y, BASE_Z + pos[1]).setType(Material.AIR);

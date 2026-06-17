@@ -5,7 +5,10 @@ package id.avalon;
 import id.avalon.commands.*;
 import id.avalon.listeners.CustomRoleListener;
 import id.avalon.listeners.CutsceneListener;
+import id.avalon.listeners.MissionListener;
 import id.avalon.listeners.TeamSelectionListener;
+import id.avalon.listeners.VotingListener;
+import id.avalon.managers.VotingManager;
 import org.bukkit.Bukkit;
 import id.avalon.managers.GameManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -15,6 +18,7 @@ public class AvalonPlugin extends JavaPlugin {
     private static AvalonPlugin instance;
     private GameManager gameManager;
     private TeamSelectionListener teamSelectionListener;
+    private VotingManager votingManager;
     
     //@Override
     // public void onLoad() {
@@ -30,6 +34,10 @@ public class AvalonPlugin extends JavaPlugin {
         gameManager = new GameManager(this);
         teamSelectionListener = new TeamSelectionListener(gameManager);
 
+        // VotingManager — dibuat setelah gameManager siap
+        votingManager = new VotingManager(this, gameManager);
+        gameManager.setVotingManager(votingManager);
+
         getServer().getPluginManager().registerEvents(
                 teamSelectionListener,
                 this
@@ -44,6 +52,14 @@ public class AvalonPlugin extends JavaPlugin {
         );
         Bukkit.getPluginManager().registerEvents(
             new id.avalon.listeners.TeamBookListener(gameManager),
+            this
+        );
+        Bukkit.getPluginManager().registerEvents(
+            new VotingListener(gameManager, votingManager),
+            this
+        );
+        Bukkit.getPluginManager().registerEvents(
+            new MissionListener(gameManager),
             this
         );
 
@@ -82,5 +98,9 @@ public class AvalonPlugin extends JavaPlugin {
 
     public TeamSelectionListener getTeamSelectionListener() {
         return teamSelectionListener;
+    }
+
+    public VotingManager getVotingManager() {
+        return votingManager;
     }
 }
