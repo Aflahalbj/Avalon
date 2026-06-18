@@ -41,7 +41,8 @@ public class MissionListener implements Listener {
     @EventHandler
     public void onDrop(PlayerDropItemEvent event) {
         if (gameManager.isMissionShears(event.getItemDrop().getItemStack())
-                || gameManager.isMissionPlant(event.getItemDrop().getItemStack())) {
+                || gameManager.isMissionPlant(event.getItemDrop().getItemStack())
+                || gameManager.isDiscussionSkipItem(event.getItemDrop().getItemStack())) {
             event.setCancelled(true);
         }
     }
@@ -53,7 +54,9 @@ public class MissionListener implements Listener {
         if (gameManager.isMissionShears(event.getCurrentItem())
                 || gameManager.isMissionShears(event.getCursor())
                 || gameManager.isMissionPlant(event.getCurrentItem())
-                || gameManager.isMissionPlant(event.getCursor())) {
+                || gameManager.isMissionPlant(event.getCursor())
+                || gameManager.isDiscussionSkipItem(event.getCurrentItem())
+                || gameManager.isDiscussionSkipItem(event.getCursor())) {
 
             event.setCancelled(true);
         }
@@ -94,6 +97,13 @@ public class MissionListener implements Listener {
 
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
+
+        // ── Skip diskusi ───────────────────────────────────────────────────────
+        if (gameManager.isDiscussionSkipItem(item)) {
+            event.setCancelled(true);
+            gameManager.handleDiscussionSkip(player);
+            return;
+        }
 
         if (!gameManager.isSabotaseShears(item)) return;
         if (!gameManager.isGameRunning()) return;

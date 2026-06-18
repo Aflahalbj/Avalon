@@ -20,6 +20,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
+import java.net.URL;
 import java.util.*;
 
 public class GameManager {
@@ -77,8 +78,23 @@ public class GameManager {
     private BukkitTask proximityTask;
     /** Apakah misi ini sudah disabotase. */
     private boolean missionSabotaged = false;
+    private int sabotageCount = 0;
+    private final Set<UUID> sabotagedPlayers = new HashSet<>();
     /** Task countdown end-mission. */
     private BukkitTask endMissionCountdownTask;
+
+    // ── Discussion state ──────────────────────────────────────────────────────
+    private static final String SKIP_TEXTURE =
+        "http://textures.minecraft.net/texture/65a84e6394baf8bd795fe747efc582cde9414fccf2f1c8608f1be18c0e079138";
+    private static final int DISCUSSION_SECONDS = 10; // 10 menit
+    private BukkitTask discussionTask;
+    /** UUID player yang sudah vote skip di fase diskusi. */
+    private final Set<UUID> discussionSkipVotes = new HashSet<>();
+    private boolean discussionActive = false;
+    private boolean discussionAfterSuccess = false;
+    /** ArmorStand floating head per player yang sudah vote skip diskusi. */
+    private final Map<UUID, ArmorStand> discussionSkipHeads = new HashMap<>();
+    private BukkitTask discussionHeadAnimTask;
 
     // ── Koordinat ────────────────────────────────────────────────────────────
 
@@ -1402,23 +1418,11 @@ public class GameManager {
         if (!gameRunning) return;
         missionActive   = true;
         missionSabotaged = false;
+        sabotageCount = 0;
+        sabotagedPlayers.clear();
         currentMissionTeam = new ArrayList<>(team);
 
         World world = getGameWorld();
-
-        broadcast(Component.text(" "));
-        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.LIGHT_PURPLE));
-        broadcast(
-            Component.text("  ⚔ FASE MISI ke-" + currentRound + " DIMULAI!", NamedTextColor.LIGHT_PURPLE)
-                .decorate(TextDecoration.BOLD)
-        );
-        broadcast(
-            Component.text("  Anggota tim: ", NamedTextColor.WHITE)
-                .append(Component.text(String.join(", ", team), NamedTextColor.GREEN)
-                    .decorate(TextDecoration.BOLD))
-        );
-        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.LIGHT_PURPLE));
-        broadcast(Component.text(" "));
 
         // ── Taruh tanaman di koordinat misi ──────────────────────────────────
         Material plantMaterial = getMissionPlant(currentMission);
@@ -1484,6 +1488,7 @@ public class GameManager {
 
                 p.sendMessage(Component.text(" "));
                 p.sendMessage(Component.text("  🌿 Misi ke-" + currentRound + " dimulai!", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
+                p.sendMessage(Component.text("  Anggota tim: ", NamedTextColor.WHITE).append(Component.text(String.join(", ", team), NamedTextColor.GREEN).decorate(TextDecoration.BOLD)));
                 if (isEvil) {
                     p.sendMessage(Component.text("  Gunakan Sabotase (klik kanan) untuk mengganti tanaman jadi dead bush!", NamedTextColor.RED));
                 } else {
@@ -1611,10 +1616,32 @@ public class GameManager {
      * Ubah blok di koor misi jadi Dead Bush. Block checker yang akan deteksi dan trigger countdown.
      */
     public void triggerSabotage(Player player) {
-        if (!missionActive || missionSabotaged) return;
+        if (!missionActive) return;
         Role role = getRole(player);
         if (role == null || !role.isEvil()) return;
+        if (sabotagedPlayers.contains(player.getUniqueId())) {
+            player.sendMessage(
+                Component.text("Kamu sudah melakukan sabotase pada misi ini.", NamedTextColor.RED)
+            );
+            return;
+        }
+        sabotagedPlayers.add(player.getUniqueId());
+        sabotageCount++;
 
+        int playerCount = registeredPlayers.size();
+        boolean needsTwoFails =
+            id.avalon.gui.TeamSelectionGUI.requiresTwoFails(playerCount, currentRound);
+
+        if (needsTwoFails && sabotageCount < 2) {
+            player.sendMessage(
+                Component.text("☠ Sabotase pertama berhasil! Dibutuhkan 1 sabotase lagi.", NamedTextColor.RED)
+            );
+            return;
+        }
+
+        if (!needsTwoFails && sabotageCount < 1) {
+            return;
+        }
         missionSabotaged = true;
 
         World world = getGameWorld();
@@ -1641,6 +1668,7 @@ public class GameManager {
     public void triggerSabotageCountdown() {
         if (!missionActive) return;
         missionActive = false;
+        String teamMembers = String.join(", ", currentMissionTeam);
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
@@ -1654,7 +1682,11 @@ public class GameManager {
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
         broadcast(Component.text("  ☠ Misi telah di sabotase!", NamedTextColor.RED).decorate(TextDecoration.BOLD));
-        broadcast(Component.text("  Kembali lagi nanti", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  Kembali lagi nanti!", NamedTextColor.DARK_RED));
+        broadcast(
+            Component.text("  Anggota tim: ", NamedTextColor.WHITE)
+                .append(Component.text(teamMembers, NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
+        );
         broadcast(Component.text("  Kamu akan diteleport kembali dalam 20 detik", NamedTextColor.GRAY));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
         broadcast(Component.text(" "));
@@ -1672,7 +1704,7 @@ public class GameManager {
                 if (seconds <= 0) {
                     cancel();
                     teleportAllToSeat();
-                    onMissionFailed();
+                    startDiscussionPhase(false);
                     return;
                 }
                 for (Player p : getOnlinePlayers()) {
@@ -1968,7 +2000,7 @@ public class GameManager {
                                 p.setInvisible(false);
                             }
 
-                            onMissionSuccess();
+                            startDiscussionPhase(true);
                         }
 
                     }.runTaskLater(plugin, 40L);
@@ -2029,6 +2061,294 @@ public class GameManager {
      * Dipanggil setelah misi gagal (disabotase).
      * Lanjut ke raja berikutnya, TAPI misi tidak berlanjut (bisa buat track misi gagal).
      */
+    // ── Discussion Phase ──────────────────────────────────────────────────────
+
+    /**
+     * Mulai fase diskusi 10 menit.
+     * Dipanggil setelah misi gagal (sabotase) dan setelah animasi deposit tanaman.
+     * @param afterSuccess true = lanjut ke rotateKing (misi sukses), false = onMissionFailed
+     */
+    private void startDiscussionPhase(boolean afterSuccess) {
+        if (!gameRunning) return;
+        discussionActive = true;
+        discussionAfterSuccess = afterSuccess;
+        discussionSkipVotes.clear();
+
+        // Bagikan item skip ke semua player yang online
+        for (Player p : getOnlinePlayers()) {
+            giveDiscussionSkipItem(p);
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.YELLOW));
+        broadcast(Component.text("  💬 FASE DISKUSI DIMULAI!", NamedTextColor.YELLOW).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Diskusikan strategi selama 10 menit.", NamedTextColor.WHITE));
+        broadcast(Component.text("  Klik kanan untuk vote skip.", NamedTextColor.GRAY));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.YELLOW));
+        broadcast(Component.text(" "));
+
+        stopDiscussionPhase(); // pastikan task lama bersih
+        startDiscussionHeadAnimation();
+
+        discussionTask = new BukkitRunnable() {
+            int seconds = DISCUSSION_SECONDS;
+
+            @Override
+            public void run() {
+                if (!gameRunning || !discussionActive) { cancel(); return; }
+
+                if (seconds <= 0) {
+                    cancel();
+                    endDiscussion(afterSuccess);
+                    return;
+                }
+
+                int minutes = seconds / 60;
+                int secs    = seconds % 60;
+                String timeStr = String.format("%d:%02d", minutes, secs);
+
+                int skipCount   = discussionSkipVotes.size();
+                int totalOnline = getOnlinePlayers().size();
+
+                NamedTextColor timeColor = seconds > 300
+                    ? NamedTextColor.GREEN
+                    : (seconds > 120 ? NamedTextColor.YELLOW : NamedTextColor.RED);
+
+                Component bar = Component.text("💬 Diskusi | ", NamedTextColor.YELLOW)
+                    .append(Component.text(timeStr, timeColor).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" | Skip: " + skipCount + "/" + totalOnline, NamedTextColor.GRAY));
+
+                for (Player p : getOnlinePlayers()) {
+                    if (p.isOnline()) p.sendActionBar(bar);
+                }
+
+                seconds--;
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    /** Hentikan discussion task dan bersihkan state. */
+    private void stopDiscussionPhase() {
+        if (discussionTask != null) {
+            discussionTask.cancel();
+            discussionTask = null;
+        }
+        if (discussionHeadAnimTask != null) {
+            discussionHeadAnimTask.cancel();
+            discussionHeadAnimTask = null;
+        }
+        clearDiscussionSkipHeads();
+    }
+
+    /** Spawn / update floating head skip di atas player yang vote. */
+    private void spawnDiscussionSkipHead(Player voter) {
+        // Hapus head lama kalau ada
+        ArmorStand old = discussionSkipHeads.remove(voter.getUniqueId());
+        if (old != null && !old.isDead()) old.remove();
+
+        Location base = voter.getLocation().clone().add(0, 1.5, 0);
+        ArmorStand stand = (ArmorStand) voter.getWorld()
+            .spawnEntity(base, org.bukkit.entity.EntityType.ARMOR_STAND);
+        stand.setInvisible(true);
+        stand.setGravity(false);
+        stand.setMarker(true);
+        stand.setSmall(true);
+        stand.setInvulnerable(true);
+        stand.addScoreboardTag("avalon_discussion_head");
+
+        // Pakai item skip sebagai helm
+        ItemStack headItem = new ItemStack(Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta meta =
+            (org.bukkit.inventory.meta.SkullMeta) headItem.getItemMeta();
+        org.bukkit.profile.PlayerProfile profile =
+            Bukkit.createPlayerProfile(UUID.randomUUID());
+        org.bukkit.profile.PlayerTextures textures = profile.getTextures();
+        try {
+            textures.setSkin(new URL(SKIP_TEXTURE));
+        } catch (Exception e) {
+            plugin.getLogger().warning("[Avalon] Gagal set texture skip head: " + e.getMessage());
+        }
+        profile.setTextures(textures);
+        meta.setOwnerProfile(profile);
+        headItem.setItemMeta(meta);
+        stand.getEquipment().setHelmet(headItem);
+
+        discussionSkipHeads.put(voter.getUniqueId(), stand);
+    }
+
+    /** Hapus semua floating head diskusi. */
+    private void clearDiscussionSkipHeads() {
+        for (ArmorStand stand : discussionSkipHeads.values()) {
+            if (stand != null && !stand.isDead()) stand.remove();
+        }
+        discussionSkipHeads.clear();
+    }
+
+    /** Mulai animasi floating (naik-turun + rotasi) untuk head diskusi. */
+    private void startDiscussionHeadAnimation() {
+        if (discussionHeadAnimTask != null) {
+            discussionHeadAnimTask.cancel();
+        }
+        discussionHeadAnimTask = new BukkitRunnable() {
+            double tick = 0;
+
+            @Override
+            public void run() {
+                if (!discussionActive && discussionSkipHeads.isEmpty()) {
+                    cancel();
+                    return;
+                }
+                tick += 0.25;
+
+                for (Map.Entry<UUID, ArmorStand> entry : new HashMap<>(discussionSkipHeads).entrySet()) {
+                    ArmorStand stand = entry.getValue();
+                    if (stand == null || stand.isDead()) {
+                        discussionSkipHeads.remove(entry.getKey());
+                        continue;
+                    }
+                    Player owner = Bukkit.getPlayer(entry.getKey());
+                    if (owner == null || !owner.isOnline()) continue;
+
+                    Location base = owner.getLocation().clone().add(0, 1.5, 0);
+                    double offsetY = Math.sin(tick + entry.getKey().hashCode() * 0.1) * 0.08;
+                    Location loc = base.clone().add(0, offsetY, 0);
+                    loc.setYaw(stand.getLocation().getYaw() + 3.0f);
+                    stand.teleport(loc);
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /** Beri item skip kepala ke player. */
+    private void giveDiscussionSkipItem(Player player) {
+        ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta meta =
+            (org.bukkit.inventory.meta.SkullMeta) skull.getItemMeta();
+
+        org.bukkit.profile.PlayerProfile profile =
+            Bukkit.createPlayerProfile(UUID.randomUUID());
+        org.bukkit.profile.PlayerTextures textures = profile.getTextures();
+        try {
+            textures.setSkin(new URL(SKIP_TEXTURE));
+        } catch (Exception e) {
+            plugin.getLogger().warning("[Avalon] Gagal set texture skip: " + e.getMessage());
+        }
+        profile.setTextures(textures);
+        meta.setOwnerProfile(profile);
+
+        meta.displayName(
+            Component.text("⏩ SKIP DISKUSI", NamedTextColor.AQUA).decorate(TextDecoration.BOLD)
+        );
+        meta.lore(List.of(
+            Component.text("Klik kanan untuk vote skip.", NamedTextColor.GRAY),
+            Component.text("Jika semua player vote, diskusi langsung selesai.", NamedTextColor.GRAY)
+        ));
+        meta.getPersistentDataContainer().set(
+            new NamespacedKey(plugin, "discussion_skip"),
+            PersistentDataType.STRING,
+            "true"
+        );
+        skull.setItemMeta(meta);
+
+        // Taruh di slot 0 (hotbar 1)
+        player.getInventory().setItem(0, skull);
+    }
+
+    /** Hapus item skip dari semua player. */
+    private void removeDiscussionSkipItems() {
+        NamespacedKey key = new NamespacedKey(plugin, "discussion_skip");
+        for (Player p : getOnlinePlayers()) {
+            org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+            for (int i = 0; i < inv.getSize(); i++) {
+                ItemStack item = inv.getItem(i);
+                if (item == null || item.getType() != Material.PLAYER_HEAD) continue;
+                ItemMeta meta = item.getItemMeta();
+                if (meta != null && meta.getPersistentDataContainer()
+                        .has(key, PersistentDataType.STRING)) {
+                    inv.setItem(i, null);
+                }
+            }
+        }
+    }
+
+    /**
+     * Cek apakah item adalah item skip diskusi.
+     */
+    public boolean isDiscussionSkipItem(ItemStack item) {
+        if (item == null || item.getType() != Material.PLAYER_HEAD) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
+        NamespacedKey key = new NamespacedKey(plugin, "discussion_skip");
+        return meta.getPersistentDataContainer().has(key, PersistentDataType.STRING);
+    }
+
+    /**
+     * Dipanggil listener saat player klik kanan item skip.
+     * Jika semua player online sudah vote → langsung end diskusi.
+     */
+    public void handleDiscussionSkip(Player player) {
+        if (!discussionActive) return;
+        if (!gameRunning) return;
+
+        UUID uid = player.getUniqueId();
+        if (discussionSkipVotes.contains(uid)) {
+            player.sendMessage(Component.text("Kamu sudah vote skip!", NamedTextColor.GRAY));
+            return;
+        }
+
+        discussionSkipVotes.add(uid);
+        spawnDiscussionSkipHead(player);
+        int skipCount   = discussionSkipVotes.size();
+        int totalOnline = getOnlinePlayers().size();
+
+        broadcast(
+            Component.text("  » ", NamedTextColor.GRAY)
+                .append(Component.text(player.getName(), NamedTextColor.AQUA))
+                .append(Component.text(" vote skip. (" + skipCount + "/" + totalOnline + ")", NamedTextColor.GRAY))
+        );
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
+
+        if (skipCount >= totalOnline) {
+            stopDiscussionPhase();
+            endDiscussion(discussionAfterSuccess);
+        }
+    }
+
+    /** Akhiri diskusi dan lanjut ke fase berikutnya. */
+    /** Akhiri diskusi dan lanjut ke fase berikutnya. */
+    private void endDiscussion(boolean afterSuccess) {
+        if (!discussionActive) return;
+        discussionActive = false;
+        stopDiscussionPhase();
+        removeDiscussionSkipItems();
+        discussionSkipVotes.clear();
+
+        // Clear actionbar
+        for (Player p : getOnlinePlayers()) {
+            p.sendActionBar(Component.text(" "));
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.YELLOW));
+        broadcast(Component.text("  ✅ Fase diskusi selesai! Lanjut ke babak berikutnya.", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.YELLOW));
+        broadcast(Component.text(" "));
+
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (!gameRunning) return;
+                    if (afterSuccess) {
+                        onMissionSuccess();
+                    } else {
+                        onMissionFailed();
+                    }
+                }
+            }.runTaskLater(plugin, 20L)
+        );
+    }
+
     private void onMissionFailed() {
 
         evilMissionFails++;
@@ -2169,6 +2489,7 @@ public class GameManager {
         if (teamSelectionActionBarTask != null) { teamSelectionActionBarTask.cancel(); teamSelectionActionBarTask = null; }
         if (endMissionCountdownTask != null)    { endMissionCountdownTask.cancel();    endMissionCountdownTask = null; }
 
+        stopDiscussionPhase();
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
@@ -2187,6 +2508,10 @@ public class GameManager {
         missionSabotaged  = false;
         missionPlantLocation = null;
         currentMissionTeam.clear();
+        discussionActive = false;
+        discussionAfterSuccess = false;
+        discussionSkipVotes.clear();
+        removeDiscussionSkipItems();
 
         for (BukkitTask task : delayedTasks) {
             task.cancel();
@@ -2234,9 +2559,10 @@ public class GameManager {
             gameWorld.setPVP(true);
             gameWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
             for (Entity e : gameWorld.getEntities()) {
-                if (e.getScoreboardTags().contains("avalon_seat"))      e.remove();
-                if (e.getScoreboardTags().contains("avalon_mannequin")) e.remove();
-                if (e.getScoreboardTags().contains("avalon_vote_head")) e.remove();
+                if (e.getScoreboardTags().contains("avalon_seat"))            e.remove();
+                if (e.getScoreboardTags().contains("avalon_mannequin"))       e.remove();
+                if (e.getScoreboardTags().contains("avalon_vote_head"))       e.remove();
+                if (e.getScoreboardTags().contains("avalon_discussion_head")) e.remove();
             }
             for (int[] pos : PLAYER_SLAB_POSITIONS)
                 gameWorld.getBlockAt(BASE_X + pos[0], BASE_Y, BASE_Z + pos[1]).setType(Material.AIR);
