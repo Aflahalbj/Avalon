@@ -23,7 +23,7 @@ import java.util.*;
  * Mengelola fase voting setelah Raja mengonfirmasi tim.
  *
  * Alur:
- *  1. startVoting() — bagikan item Setuju/Tolak, mulai countdown 5 menit
+ *  1. startVoting() — bagikan item Setuju/Tolak, mulai countdown 10 menit
  *  2. Saat player klik kanan item → catat vote, tampilkan kepala melayang di atas diri sendiri
  *  3. Jika semua sudah vote → langsung selesai (hentikan waktu)
  *  4. Jika waktu habis → player yang belum vote dianggap abstain
@@ -44,7 +44,7 @@ public class VotingManager {
     public static final String VOTE_SETUJU        = "setuju";
     public static final String VOTE_TOLAK         = "tolak";
 
-    private static final int VOTING_SECONDS      = 10; // 5 menit
+    private static final int VOTING_SECONDS      = 600; // 10 menit
     private static final int MAX_REJECT_STREAK   = 5;   // Rule 1
 
     private final AvalonPlugin plugin;
@@ -224,7 +224,7 @@ public class VotingManager {
 
                 Component actionBar = Component.text("🗳 Voting | ", NamedTextColor.AQUA)
                     .append(Component.text(timeStr, timeColor).decorate(TextDecoration.BOLD))
-                    .append(Component.text(" | Sudah vote: " + votes.size() + "/"
+                    .append(Component.text(" | Vote: " + votes.size() + "/"
                         + getRegisteredOnlinePlayers().size(), NamedTextColor.GRAY));
 
                 for (Player p : getRegisteredOnlinePlayers()) {

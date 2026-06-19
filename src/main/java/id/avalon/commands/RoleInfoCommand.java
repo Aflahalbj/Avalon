@@ -5,10 +5,19 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.NotNull;
+import id.avalon.managers.GameManager;
+import id.avalon.models.Role;
+import org.bukkit.entity.Player;
 
 import java.util.Map;
 
 public class RoleInfoCommand implements CommandExecutor {
+
+    private final GameManager gameManager;
+
+    public RoleInfoCommand(GameManager gameManager) {
+        this.gameManager = gameManager;
+    }
 
     private static final Map<String, String> ROLE_INFO = Map.ofEntries(
 
@@ -147,22 +156,33 @@ public class RoleInfoCommand implements CommandExecutor {
             @NotNull String[] args) {
 
         if (args.length == 0) {
-            sender.sendMessage("""
-                §eGunakan:
-                §f/roleinfo <role>
 
-                §aRole tersedia:
-                Merlin
-                Percival
-                Loyal
-                Assassin
-                Morgana
-                Mordred
-                Oberon
-                Minion
-                """);
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cHanya player yang bisa melihat role sendiri.");
             return true;
         }
+
+        Role role = gameManager.getRole(player);
+
+        if (role == null) {
+            sender.sendMessage("§cKamu tidak sedang memiliki role.");
+            return true;
+        }
+
+        String key = switch (role) {
+            case MERLIN -> "merlin";
+            case PERCIVAL -> "percival";
+            case LOYAL_SERVANT -> "loyal";
+            case ASSASSIN -> "assassin";
+            case MORGANA -> "morgana";
+            case MORDRED -> "mordred";
+            case OBERON -> "oberon";
+            case MINION_OF_MORDRED -> "minion";
+        };
+
+        sender.sendMessage(ROLE_INFO.get(key));
+        return true;
+    }
 
         String role = args[0].toLowerCase();
 

@@ -18,7 +18,9 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.Repairable;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.enchantments.Enchantment;
 
 import java.net.URL;
 import java.util.*;
@@ -86,7 +88,7 @@ public class GameManager {
     // ── Discussion state ──────────────────────────────────────────────────────
     private static final String SKIP_TEXTURE =
         "http://textures.minecraft.net/texture/65a84e6394baf8bd795fe747efc582cde9414fccf2f1c8608f1be18c0e079138";
-    private static final int DISCUSSION_SECONDS = 10; // 10 menit
+    private static final int DISCUSSION_SECONDS = 600; // 10 menit
     private BukkitTask discussionTask;
     /** UUID player yang sudah vote skip di fase diskusi. */
     private final Set<UUID> discussionSkipVotes = new HashSet<>();
@@ -95,6 +97,23 @@ public class GameManager {
     /** ArmorStand floating head per player yang sudah vote skip diskusi. */
     private final Map<UUID, ArmorStand> discussionSkipHeads = new HashMap<>();
     private BukkitTask discussionHeadAnimTask;
+
+    // ── Assassination state ───────────────────────────────────────────────────
+    private static final int ASSASSINATION_SECONDS = 600; // 10 menit
+    /** Apakah fase assassination sedang aktif. */
+    private boolean assassinationActive = false;
+    /** Task countdown fase assassination. */
+    private BukkitTask assassinationTask;
+    /** UUID player yang sudah vote skip di fase assassination. */
+    private final Set<UUID> assassinationSkipVotes = new HashSet<>();
+    /** ArmorStand floating head per kubu jahat yang vote skip assassination. */
+    private final Map<UUID, ArmorStand> assassinationSkipHeads = new HashMap<>();
+    /** Task animasi floating head assassination. */
+    private BukkitTask assassinationHeadAnimTask;
+    /** PDC key untuk arrow assassin. */
+    public static final String ASSASSIN_BOW_KEY = "assassin_bow";
+    /** Apakah assassin sudah menembak (untuk prevent double trigger). */
+    private boolean assassinShotFired = false;
 
     // ── Koordinat ────────────────────────────────────────────────────────────
 
@@ -267,14 +286,14 @@ public class GameManager {
      * Dipanggil setelah satu giliran selesai.
      */
     public void rotateKing() {
-        // if (kingOrder.isEmpty()) return;
-        // currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
-        // teamSelectionSessions.clear();
-        // announceKing();
-        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        currentKingIndex = kingOrder.indexOf("itslyricss");
+        if (kingOrder.isEmpty()) return;
+        currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
         teamSelectionSessions.clear();
         announceKing();
+        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
+        // currentKingIndex = kingOrder.indexOf("itslyricss");
+        // teamSelectionSessions.clear();
+        // announceKing();
     }
 
     /** Umumkan siapa Raja saat ini ke semua player. */
@@ -455,37 +474,15 @@ public class GameManager {
         // Hentikan action bar "Menunggu raja memilih tim"
         stopTeamSelectionActionBar();
 
-        broadcast(Component.text(" "));
-        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
-        broadcast(
-            Component.text("  ⚔ Tim Misi ke-" + currentRound + " telah dipilih!", NamedTextColor.AQUA)
-                .decorate(TextDecoration.BOLD)
-        );
-        broadcast(
-            Component.text("  Raja: ", NamedTextColor.YELLOW)
-                .append(Component.text(king.getName(), NamedTextColor.GOLD))
-        );
-
-        StringBuilder teamList = new StringBuilder();
-        for (int i = 0; i < team.size(); i++) {
-            teamList.append(team.get(i));
-            if (i < team.size() - 1) teamList.append(", ");
-        }
-        broadcast(
-            Component.text("  Anggota: ", NamedTextColor.WHITE)
-                .append(Component.text(teamList.toString(), NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
-        );
-
         int playerCount = registeredPlayers.size();
         if (id.avalon.gui.TeamSelectionGUI.requiresTwoFails(playerCount, currentRound)) {
+            broadcast(Component.text(" "));
             broadcast(
-                Component.text("  ⚠ Misi ini butuh 2 Fail untuk digagalkan!", NamedTextColor.RED)
+                Component.text("  ⚠ Misi ini butuh 2 sabotase untuk digagalkan!", NamedTextColor.RED)
                     .decorate(TextDecoration.ITALIC)
             );
+            broadcast(Component.text(" "));
         }
-
-        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_AQUA));
-        broadcast(Component.text(" "));
 
         // Mulai fase voting setelah 2 detik
         final List<String> teamFinal = new ArrayList<>(team);
@@ -1013,17 +1010,17 @@ public class GameManager {
         });
 
         // Pilih Raja pertama secara acak
-        // int randomStart = (int) (Math.random() * sorted.size());
+        int randomStart = (int) (Math.random() * sorted.size());
         // DEBUG — (KODE ASLI JANGAN DIHAPUS!)
-        int randomStart = sorted.indexOf("itslyricss");
+        // int randomStart = sorted.indexOf("itslyricss");
         for (int i = 0; i < sorted.size(); i++) {
             kingOrder.add(sorted.get((randomStart + i) % sorted.size()));
         }
 
         currentKingIndex = 0;
-        // String kingName = kingOrder.get(0);
+        String kingName = kingOrder.get(0);
         // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        String kingName = "itslyricss";
+        // String kingName = "itslyricss";
 
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
@@ -1069,15 +1066,7 @@ public class GameManager {
                             Component.text("  👑 Raja Misi 1: ", NamedTextColor.YELLOW)
                                 .append(Component.text(kingName, NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
                         );
-                        p.sendMessage(Component.text("  Urutan Raja:", NamedTextColor.GRAY));
-                        for (int i = 0; i < kingOrder.size(); i++) {
-                            String mark  = (i == 0) ? " §6§l(Raja Sekarang)" : "";
-                            String color = (i == 0) ? "§e" : "§7";
-                            p.sendMessage(Component.text(
-                                "    " + (i + 1) + ". " + color + kingOrder.get(i) + mark
-                            ));
-                        }
-                        p.sendMessage(Component.text(" "));
+                        p.sendMessage(Component.text("  Urutan raja berikutnya searah jarum jam.", NamedTextColor.GRAY));
                         p.sendMessage(
                             Component.text("  Misi ke-1 | Kuota Tim: ", NamedTextColor.AQUA)
                                 .append(Component.text(
@@ -1704,6 +1693,10 @@ public class GameManager {
                 if (seconds <= 0) {
                     cancel();
                     teleportAllToSeat();
+                    if (evilMissionFails + 1 >= 3) {
+                        triggerEvilWin("3 misi telah disabotase");
+                        return;
+                    }
                     startDiscussionPhase(false);
                     return;
                 }
@@ -1990,17 +1983,45 @@ public class GameManager {
                         @Override
                         public void run() {
 
-                            teleportAllToSeat();
-
+                            // Unlock camera DULU sebelum teleport,
+                            // supaya camera-lock loop tidak override rotasi
                             for (Player p : getOnlinePlayers()) {
-                                unlockMovement(p);
                                 unlockCamera(p);
+                                unlockMovement(p);
                                 p.setAllowFlight(false);
                                 p.setFlying(false);
                                 p.setInvisible(false);
                             }
 
-                            startDiscussionPhase(true);
+                            // teleportAllToSeat sudah set yaw ke arah base secara sinkron
+                            teleportAllToSeat();
+
+                            // Delay 15L: tunggu seat spawn (5L) + 1 server tick settle,
+                            // lalu konfirmasi rotasi ke base dan lanjut
+                            new BukkitRunnable() {
+                                @Override
+                                public void run() {
+                                    if (!gameRunning) return;
+                                    for (Player p : getOnlinePlayers()) {
+                                        float yaw = yawTowardBase(
+                                            p.getLocation().getX(),
+                                            p.getLocation().getZ()
+                                        );
+                                        p.setRotation(yaw, 0);
+                                    }
+                                    if (currentMission >= 3) {
+                                        Player assassin = getPlayerWithRole(getOnlinePlayers(), Role.ASSASSIN);
+
+                                        if (assassin == null) {
+                                            triggerGoodWin();
+                                            return;
+                                        }
+                                        startAssassinationPhase();
+                                    } else {
+                                        startDiscussionPhase(true);
+                                    }
+                                }
+                            }.runTaskLater(plugin, 15L);
                         }
 
                     }.runTaskLater(plugin, 40L);
@@ -2359,13 +2380,6 @@ public class GameManager {
             return;
         }
 
-        broadcast(Component.text(" "));
-        broadcast(Component.text(
-            "  ❌ Misi ke-" + (currentRound - 1) + " gagal. Raja berganti.",
-            NamedTextColor.RED
-        ));
-        broadcast(Component.text(" "));
-
         // Reset reject streak (misi baru = bukan akibat vote reject)
         if (votingManager != null) votingManager.resetRejectStreak();
 
@@ -2385,25 +2399,12 @@ public class GameManager {
      * Lanjut ke misi berikutnya.
      */
     private void onMissionSuccess() {
-        // Reset reject streak saat misi sukses
-        if (votingManager != null) votingManager.resetRejectStreak();
 
-        currentMission++; // tanaman naik
-        currentRound++;   // ronde naik
-        if (currentMission > 3) {
-            // Kubu baik menang (semua misi selesai)
-            broadcast(Component.text(" "));
-            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
-            broadcast(Component.text("  🏆 KUBU BAIK MENANG!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
-            broadcast(Component.text("  Semua misi berhasil diselesaikan!", NamedTextColor.GREEN));
-            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
-            broadcast(Component.text(" "));
-            return;
-        }
+        if (votingManager != null)
+            votingManager.resetRejectStreak();
 
-        broadcast(Component.text(" "));
-        broadcast(Component.text("  ➡ Lanjut ke Misi ke-" + currentRound + "!", NamedTextColor.YELLOW));
-        broadcast(Component.text(" "));
+        currentMission++;
+        currentRound++;
 
         delayedTasks.add(
             new BukkitRunnable() {
@@ -2415,6 +2416,586 @@ public class GameManager {
             }.runTaskLater(plugin, 60L)
         );
     }
+    // ── Assassination Phase ───────────────────────────────────────────────────
+
+    /**
+     * Mulai fase diskusi assassin:
+     * - Semua kubu baik tetap duduk di seat
+     * - Kubu jahat dieject dari seat, bebas berjalan
+     * - Semua kubu jahat dapat item skip
+     * - Timer 10 menit; setelah habis / semua skip → assassin dapat bow
+     */
+    private void startAssassinationPhase() {
+        if (!gameRunning) return;
+        assassinationActive = true;
+        assassinShotFired = false;
+        assassinationSkipVotes.clear();
+
+        World world = getGameWorld();
+        world.setPVP(true);
+
+        // Eject & bebaskan kubu jahat, kubu baik tetap di seat (lockMovement)
+        for (Player p : getOnlinePlayers()) {
+            Role role = playerRoles.get(p.getUniqueId());
+            if (role != null && role.isEvil()) {
+                // Eject dari seat
+                if (p.getVehicle() != null) {
+                    revealPhaseActive = true;
+                    p.getVehicle().eject();
+                    revealPhaseActive = false;
+                }
+                unlockMovement(p);
+                // Beri item skip
+                giveAssassinationSkipItem(p);
+
+                p.sendTitle(
+                    "§4§l☠ FASE ASSASSINATION",
+                    "§cDiskusikan siapa Merlin — 10 menit!",
+                    10, 80, 20
+                );
+                p.playSound(p.getLocation(), Sound.ENTITY_WITHER_SPAWN, 0.6f, 1.2f);
+            } else {
+                // Kubu baik: tetap duduk, lock movement
+                lockMovement(p);
+                p.sendTitle(
+                    "§6§l⚠ KUBU JAHAT BERDISKUSI",
+                    "§eAssassin sedang mencari Merlin...",
+                    10, 80, 20
+                );
+            }
+        }
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  ☠ FASE ASSASSINATION!", NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Kubu jahat berdiskusi selama 10 menit.", NamedTextColor.RED));
+        broadcast(Component.text("  Kubu jahat: klik kanan untuk vote skip.", NamedTextColor.GRAY));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text(" "));
+
+        startAssassinationHeadAnimation();
+
+        // Timer 10 menit
+        assassinationTask = new BukkitRunnable() {
+            int seconds = ASSASSINATION_SECONDS;
+
+            @Override
+            public void run() {
+                if (!gameRunning || !assassinationActive) { cancel(); return; }
+
+                if (seconds <= 0) {
+                    cancel();
+                    endAssassinationDiscussion();
+                    return;
+                }
+
+                int minutes = seconds / 60;
+                int secs    = seconds % 60;
+                String timeStr = String.format("%d:%02d", minutes, secs);
+
+                int skipCount = assassinationSkipVotes.size();
+                // Hitung total kubu jahat online
+                long evilCount = getOnlinePlayers().stream()
+                    .filter(p -> { Role r = playerRoles.get(p.getUniqueId()); return r != null && r.isEvil(); })
+                    .count();
+
+                NamedTextColor timeColor = seconds > 300
+                    ? NamedTextColor.RED
+                    : (seconds > 120 ? NamedTextColor.DARK_RED : NamedTextColor.WHITE);
+
+                Component bar = Component.text("☠ Assassination | ", NamedTextColor.DARK_RED)
+                    .append(Component.text(timeStr, timeColor).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" | Skip: " + skipCount + "/" + evilCount, NamedTextColor.GRAY));
+
+                for (Player p : getOnlinePlayers()) {
+                    if (p.isOnline()) p.sendActionBar(bar);
+                }
+
+                // Update posisi floating head kubu jahat yang sudah skip
+                // (dilakukan di animTask terpisah)
+
+                seconds--;
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    /** Beri item skip assassination kepada player kubu jahat. */
+    private void giveAssassinationSkipItem(Player player) {
+        ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta meta =
+            (org.bukkit.inventory.meta.SkullMeta) skull.getItemMeta();
+
+        org.bukkit.profile.PlayerProfile profile =
+            Bukkit.createPlayerProfile(UUID.randomUUID());
+        org.bukkit.profile.PlayerTextures textures = profile.getTextures();
+        try {
+            textures.setSkin(new URL(SKIP_TEXTURE));
+        } catch (Exception e) {
+            plugin.getLogger().warning("[Avalon] Gagal set texture skip assassination: " + e.getMessage());
+        }
+        profile.setTextures(textures);
+        meta.setOwnerProfile(profile);
+        meta.displayName(
+            Component.text("⏩ SKIP DISKUSI", NamedTextColor.RED).decorate(TextDecoration.BOLD)
+        );
+        meta.lore(List.of(
+            Component.text("Klik kanan untuk vote skip.", NamedTextColor.GRAY),
+            Component.text("Jika semua kubu jahat vote, diskusi langsung selesai.", NamedTextColor.GRAY)
+        ));
+        meta.getPersistentDataContainer().set(
+            new NamespacedKey(plugin, "assassination_skip"),
+            PersistentDataType.STRING,
+            "true"
+        );
+        skull.setItemMeta(meta);
+        player.getInventory().setItem(0, skull);
+    }
+
+    /** Cek apakah item adalah skip assassination. */
+    public boolean isAssassinationSkipItem(ItemStack item) {
+        if (item == null || item.getType() != Material.PLAYER_HEAD) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
+        return meta.getPersistentDataContainer()
+            .has(new NamespacedKey(plugin, "assassination_skip"), PersistentDataType.STRING);
+    }
+
+    /**
+     * Dipanggil listener saat kubu jahat klik kanan item skip assassination.
+     */
+    public void handleAssassinationSkip(Player player) {
+        if (!assassinationActive) return;
+        if (!gameRunning) return;
+
+        Role role = playerRoles.get(player.getUniqueId());
+        if (role == null || !role.isEvil()) {
+            player.sendMessage(Component.text("Hanya kubu jahat yang bisa vote skip!", NamedTextColor.RED));
+            return;
+        }
+
+        UUID uid = player.getUniqueId();
+        if (assassinationSkipVotes.contains(uid)) {
+            player.sendMessage(Component.text("Kamu sudah vote skip!", NamedTextColor.GRAY));
+            return;
+        }
+
+        assassinationSkipVotes.add(uid);
+        spawnAssassinationSkipHead(player);
+
+        long evilCount = getOnlinePlayers().stream()
+            .filter(p -> { Role r = playerRoles.get(p.getUniqueId()); return r != null && r.isEvil(); })
+            .count();
+        int skipCount = assassinationSkipVotes.size();
+
+        broadcast(
+            Component.text("  » ", NamedTextColor.GRAY)
+                .append(Component.text(player.getName(), NamedTextColor.RED))
+                .append(Component.text(" vote skip. (" + skipCount + "/" + evilCount + ")", NamedTextColor.GRAY))
+        );
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
+
+        if (skipCount >= evilCount) {
+            stopAssassinationPhase();
+            endAssassinationDiscussion();
+        }
+    }
+
+    /** Spawn floating head di atas player kubu jahat yang sudah vote skip. */
+    private void spawnAssassinationSkipHead(Player voter) {
+        ArmorStand old = assassinationSkipHeads.remove(voter.getUniqueId());
+        if (old != null && !old.isDead()) old.remove();
+
+        Location base = voter.getLocation().clone().add(0, 1.5, 0);
+        ArmorStand stand = (ArmorStand) voter.getWorld()
+            .spawnEntity(base, org.bukkit.entity.EntityType.ARMOR_STAND);
+        stand.setInvisible(true);
+        stand.setGravity(false);
+        stand.setMarker(false); // marker=false agar bisa ikut player (non-marker bisa teleport)
+        stand.setSmall(true);
+        stand.setInvulnerable(true);
+        stand.addScoreboardTag("avalon_assassination_head");
+
+        ItemStack headItem = new ItemStack(Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta skullMeta =
+            (org.bukkit.inventory.meta.SkullMeta) headItem.getItemMeta();
+        org.bukkit.profile.PlayerProfile profile =
+            Bukkit.createPlayerProfile(UUID.randomUUID());
+        org.bukkit.profile.PlayerTextures textures = profile.getTextures();
+        try {
+            textures.setSkin(new URL(SKIP_TEXTURE));
+        } catch (Exception e) {
+            plugin.getLogger().warning("[Avalon] Gagal set texture skip head assassination: " + e.getMessage());
+        }
+        profile.setTextures(textures);
+        skullMeta.setOwnerProfile(profile);
+        headItem.setItemMeta(skullMeta);
+        stand.getEquipment().setHelmet(headItem);
+
+        assassinationSkipHeads.put(voter.getUniqueId(), stand);
+    }
+
+    /** Hapus semua floating head assassination. */
+    private void clearAssassinationSkipHeads() {
+        for (ArmorStand stand : assassinationSkipHeads.values()) {
+            if (stand != null && !stand.isDead()) stand.remove();
+        }
+        assassinationSkipHeads.clear();
+    }
+
+    /** Animasi floating head assassination — mengikuti player yang berjalan-jalan. */
+    private void startAssassinationHeadAnimation() {
+        if (assassinationHeadAnimTask != null) {
+            assassinationHeadAnimTask.cancel();
+        }
+        assassinationHeadAnimTask = new BukkitRunnable() {
+            double tick = 0;
+
+            @Override
+            public void run() {
+                if (!assassinationActive && assassinationSkipHeads.isEmpty()) {
+                    cancel();
+                    return;
+                }
+                tick += 0.25;
+
+                for (Map.Entry<UUID, ArmorStand> entry : new HashMap<>(assassinationSkipHeads).entrySet()) {
+                    ArmorStand stand = entry.getValue();
+                    if (stand == null || stand.isDead()) {
+                        assassinationSkipHeads.remove(entry.getKey());
+                        continue;
+                    }
+                    Player owner = Bukkit.getPlayer(entry.getKey());
+                    if (owner == null || !owner.isOnline()) continue;
+
+                    // Ikuti player terus (karena player bisa jalan-jalan)
+                    Location base = owner.getLocation().clone().add(0, 1.5, 0);
+                    double offsetY = Math.sin(tick + entry.getKey().hashCode() * 0.1) * 0.08;
+                    Location loc = base.clone().add(0, offsetY, 0);
+                    loc.setYaw(stand.getLocation().getYaw() + 3.0f);
+                    stand.teleport(loc);
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /** Hentikan dan bersihkan semua state assassination. */
+    private void stopAssassinationPhase() {
+        assassinationActive = false;
+        if (assassinationTask != null) {
+            assassinationTask.cancel();
+            assassinationTask = null;
+        }
+        if (assassinationHeadAnimTask != null) {
+            assassinationHeadAnimTask.cancel();
+            assassinationHeadAnimTask = null;
+        }
+        clearAssassinationSkipHeads();
+
+        // Hapus item skip dari kubu jahat
+        NamespacedKey key = new NamespacedKey(plugin, "assassination_skip");
+        for (Player p : getOnlinePlayers()) {
+            org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+            for (int i = 0; i < inv.getSize(); i++) {
+                ItemStack item = inv.getItem(i);
+                if (item == null || item.getType() != Material.PLAYER_HEAD) continue;
+                ItemMeta m = item.getItemMeta();
+                if (m != null && m.getPersistentDataContainer().has(key, PersistentDataType.STRING)) {
+                    inv.setItem(i, null);
+                }
+            }
+        }
+    }
+
+    /** Timer habis / semua kubu jahat skip → kasih bow ke assassin. */
+    private void endAssassinationDiscussion() {
+        if (!gameRunning) return;
+        stopAssassinationPhase();
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text("  🏹 WAKTU HABIS! ASSASSIN, TEMUKAN MERLIN!", NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Panah player yang menurutmu adalah Merlin.", NamedTextColor.RED));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+        broadcast(Component.text(" "));
+
+        // Kasih bow + arrow ke assassin
+        giveAssassinBow();
+    }
+
+    /** Berikan bow 1-durability + arrow ke player dengan role ASSASSIN. */
+    private void giveAssassinBow() {
+        for (Player p : getOnlinePlayers()) {
+            Role role = playerRoles.get(p.getUniqueId());
+            if (role != Role.ASSASSIN) continue;
+
+            p.getInventory().clear();
+
+            // Bow dengan durability 1 (hampir rusak = pecah setelah 1 tembakan)
+            ItemStack bow = new ItemStack(Material.BOW);
+            ItemMeta bowMeta = bow.getItemMeta();
+            bowMeta.displayName(
+                Component.text("🏹 Panah Assassin", NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD)
+            );
+            bowMeta.lore(List.of(
+                Component.text("Panah satu kali. Pilih dengan bijak.", NamedTextColor.GRAY)
+            ));
+            // Set damage agar durability tinggal 1 (max durability bow = 384)
+            if (bowMeta instanceof org.bukkit.inventory.meta.Damageable damageable) {
+                damageable.setDamage(383); // 384 - 1 = 383 damage → sisa 1 durability
+            }
+            // PDC marker agar listener tahu ini arrow assassin
+            bowMeta.getPersistentDataContainer().set(
+                new NamespacedKey(plugin, ASSASSIN_BOW_KEY),
+                PersistentDataType.STRING,
+                "true"
+            );
+            bow.setItemMeta(bowMeta);
+
+            ItemStack arrow = new ItemStack(Material.ARROW, 1);
+
+            p.getInventory().setItem(0, bow);
+            p.getInventory().setItem(1, arrow);
+            p.getInventory().setHeldItemSlot(0);
+
+            p.sendTitle(
+                "§4§l🏹 TEMBAK MERLIN!",
+                "§cPanah player yang menurutmu Merlin.",
+                10, 100, 20
+            );
+            p.playSound(p.getLocation(), Sound.ITEM_CROSSBOW_LOADING_MIDDLE, 1f, 0.8f);
+
+            broadcast(
+                Component.text("  🏹 ", NamedTextColor.DARK_RED)
+                    .append(Component.text(p.getName(), NamedTextColor.RED).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" (Assassin) kini memegang busur!", NamedTextColor.DARK_RED))
+            );
+            break; // Hanya satu assassin
+        }
+    }
+
+    /**
+     * Dipanggil dari listener saat arrow mengenai entity.
+     * Jika arrow adalah assassin bow → tentukan menang/kalah.
+     *
+     * @param arrow  Arrow yang ditembakkan
+     * @param target Entity yang kena panah
+     */
+    public void handleAssassinArrowHit(Arrow arrow, Entity target) {
+        if (!gameRunning) return;
+        if (assassinShotFired) return; // Prevent double trigger
+
+        // Cek apakah ini arrow assassin (shooter memegang bow ber-PDC)
+        if (!(arrow.getShooter() instanceof Player shooter)) return;
+
+        // Cek PDC di item bow yang dipakai shooter
+        // (Arrow sudah ditembak, jadi kita cek tag di arrow PDC yang kita set saat giveAssassinBow)
+        // Lebih aman: cek apakah shooter adalah assassin
+        Role shooterRole = playerRoles.get(shooter.getUniqueId());
+        if (shooterRole != Role.ASSASSIN) return;
+
+        assassinShotFired = true;
+
+        // Summon petir di target + kill jika player (PVP off)
+        World targetWorld = target.getWorld();
+        targetWorld.strikeLightningEffect(target.getLocation());
+
+        if (target instanceof Player hitPlayer) {
+            // Kill target — sementara set survival agar setHealth(0) bekerja
+            hitPlayer.setGameMode(GameMode.SURVIVAL);
+            hitPlayer.setHealth(0);
+        }
+
+        if (!(target instanceof Player targetPlayer)) {
+            // Kena entity bukan player → salah
+            triggerAssassinFail();
+            return;
+        }
+
+        Role targetRole = playerRoles.get(targetPlayer.getUniqueId());
+
+        if (targetRole == Role.MERLIN) {
+            // BENAR: Assassin berhasil menemukan Merlin → kubu jahat menang
+            broadcast(Component.text(" "));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+            broadcast(Component.text("  ☠ ASSASSIN MENEMUKAN MERLIN!", NamedTextColor.DARK_RED).decorate(TextDecoration.BOLD));
+            broadcast(
+                Component.text("  🏹 ", NamedTextColor.RED)
+                    .append(Component.text(targetPlayer.getName(), NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" adalah MERLIN!", NamedTextColor.RED))
+            );
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
+            broadcast(Component.text(" "));
+
+            delayedTasks.add(
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        if (!gameRunning) return;
+                        triggerEvilWin("Assassin berhasil menemukan Merlin!");
+                    }
+                }.runTaskLater(plugin, 60L)
+            );
+        } else {
+            // SALAH: Bukan Merlin → kubu jahat kalah, animasi meledak
+            broadcast(Component.text(" "));
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+            broadcast(Component.text("  🏆 ASSASSIN SALAH MENEBAK!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
+            broadcast(
+                Component.text("  ", NamedTextColor.WHITE)
+                    .append(Component.text(targetPlayer.getName(), NamedTextColor.YELLOW).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" bukan Merlin. Kubu baik menang!", NamedTextColor.GREEN))
+            );
+            broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+            broadcast(Component.text(" "));
+
+            triggerAssassinFail();
+        }
+    }
+
+    /**
+     * Dipanggil saat arrow assassin meleset (jatuh ke tanah tanpa kena player).
+     * Dianggap salah tebak.
+     */
+    public void handleAssassinArrowMiss() {
+        if (!gameRunning) return;
+        if (assassinShotFired) return;
+        assassinShotFired = true;
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+        broadcast(Component.text("  🏆 ASSASSIN MELESET!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Panah tidak mengenai siapapun. Kubu baik menang!", NamedTextColor.GREEN));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+        broadcast(Component.text(" "));
+
+        triggerAssassinFail();
+    }
+
+    /**
+     * Assassin salah tebak → animasi scale 1.2 ↔ 1.0 beberapa kali,
+     * lalu partikel ledakan + suara + kill semua kubu jahat, lalu good win.
+     */
+    private void triggerAssassinFail() {
+        if (!gameRunning) return;
+
+        // Kumpulkan semua player kubu jahat
+        List<Player> evilPlayers = new ArrayList<>();
+        for (Player p : getOnlinePlayers()) {
+            Role role = playerRoles.get(p.getUniqueId());
+            if (role != null && role.isEvil()) {
+                evilPlayers.add(p);
+            }
+        }
+
+        // Animasi scale 1.2 ↔ 1.0 × 5 kali (10 toggle, interval 5 tick = 0.25 detik)
+        new BukkitRunnable() {
+            int toggle = 0;
+            final int TOTAL_TOGGLES = 10;
+
+            @Override
+            public void run() {
+                if (!gameRunning) { cancel(); return; }
+
+                double scale = (toggle % 2 == 0) ? 1.2 : 1.0;
+                for (Player p : evilPlayers) {
+                    if (p.isOnline()) {
+                        var attr = p.getAttribute(Attribute.SCALE);
+                        if (attr != null) attr.setBaseValue(scale);
+                    }
+                }
+
+                toggle++;
+
+                if (toggle >= TOTAL_TOGGLES) {
+                    cancel();
+
+                    // Reset scale ke 1.0
+                    for (Player p : evilPlayers) {
+                        if (p.isOnline()) {
+                            var attr = p.getAttribute(Attribute.SCALE);
+                            if (attr != null) attr.setBaseValue(1.0);
+                        }
+                    }
+
+                    // Partikel ledakan + suara + kill semua kubu jahat
+                    new BukkitRunnable() {
+                        @Override
+                        public void run() {
+                            if (!gameRunning) return;
+                            for (Player p : evilPlayers) {
+                                if (!p.isOnline()) continue;
+                                World w = p.getWorld();
+                                Location loc = p.getLocation().clone().add(0, 1, 0);
+
+                                // Partikel ledakan besar
+                                w.spawnParticle(Particle.EXPLOSION, loc, 3, 0.3, 0.3, 0.3, 0);
+                                w.spawnParticle(Particle.EXPLOSION_EMITTER, loc, 1, 0, 0, 0, 0);
+                                w.spawnParticle(Particle.DUST,
+                                    loc, 40,
+                                    new Particle.DustOptions(Color.fromRGB(200, 0, 0), 2f));
+
+                                // Suara ledakan
+                                w.playSound(loc, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.9f);
+                                w.playSound(loc, Sound.ENTITY_WITHER_DEATH, 0.7f, 1.2f);
+
+                                // Kill player (PVP off, pakai setHealth 0 di mode survival sementara)
+                                GameMode prev = p.getGameMode();
+                                p.setGameMode(GameMode.SURVIVAL);
+                                p.setHealth(0);
+                            }
+
+                            // Lanjut ke good win setelah 1.5 detik
+                            new BukkitRunnable() {
+                                @Override
+                                public void run() {
+                                    if (!gameRunning) return;
+                                    triggerGoodWin();
+                                }
+                            }.runTaskLater(plugin, 30L);
+                        }
+                    }.runTaskLater(plugin, 5L);
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 5L);
+    }
+
+    /**
+     * Kubu baik menang (assassin salah tebak Merlin).
+     */
+    private void triggerGoodWin() {
+        if (!gameRunning) return;
+
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+        broadcast(Component.text("  🏆 KUBU BAIK MENANG!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
+        broadcast(Component.text("  Merlin berhasil menyembuhkan pak fred!", NamedTextColor.GREEN));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
+        broadcast(Component.text(" "));
+
+        // Reveal semua role
+        for (Map.Entry<UUID, Role> entry : playerRoles.entrySet()) {
+            Player p = Bukkit.getPlayer(entry.getKey());
+            if (p != null) {
+                NamedTextColor color = entry.getValue().isGood() ? NamedTextColor.AQUA : NamedTextColor.RED;
+                broadcast(
+                    Component.text("  ✨ ", color)
+                        .append(Component.text(p.getName(), NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
+                        .append(Component.text(" adalah " + entry.getValue().name(), color))
+                );
+            }
+        }
+        broadcast(Component.text(" "));
+
+        delayedTasks.add(
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    cleanup();
+                }
+            }.runTaskLater(plugin, 100L)
+        );
+    }
+
 
     /**
      * Dipanggil VotingManager saat kubu jahat menang karena 5x reject.
@@ -2461,6 +3042,16 @@ public class GameManager {
         for (Player p : getOnlinePlayers()) p.sendMessage(message);
     }
 
+    public boolean isAssassinArrow(Arrow arrow) {
+
+        if (!(arrow.getShooter() instanceof Player shooter))
+            return false;
+
+        Role role = playerRoles.get(shooter.getUniqueId());
+
+        return role == Role.ASSASSIN;
+    }
+
     private List<Player> getOnlinePlayers() {
         List<Player> list = new ArrayList<>();
         for (String name : registeredPlayers) {
@@ -2493,6 +3084,7 @@ public class GameManager {
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
+        stopAssassinationPhase();
 
         // Cancel voting jika sedang berjalan
         if (votingManager != null) {
@@ -2512,6 +3104,9 @@ public class GameManager {
         discussionAfterSuccess = false;
         discussionSkipVotes.clear();
         removeDiscussionSkipItems();
+        assassinationActive = false;
+        assassinShotFired = false;
+        assassinationSkipVotes.clear();
 
         for (BukkitTask task : delayedTasks) {
             task.cancel();
@@ -2563,6 +3158,7 @@ public class GameManager {
                 if (e.getScoreboardTags().contains("avalon_mannequin"))       e.remove();
                 if (e.getScoreboardTags().contains("avalon_vote_head"))       e.remove();
                 if (e.getScoreboardTags().contains("avalon_discussion_head")) e.remove();
+                if (e.getScoreboardTags().contains("avalon_assassination_head")) e.remove();
             }
             for (int[] pos : PLAYER_SLAB_POSITIONS)
                 gameWorld.getBlockAt(BASE_X + pos[0], BASE_Y, BASE_Z + pos[1]).setType(Material.AIR);

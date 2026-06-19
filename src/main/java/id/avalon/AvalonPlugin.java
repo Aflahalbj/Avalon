@@ -3,11 +3,13 @@ package id.avalon;
 // import com.github.retrooper.packetevents.PacketEvents;
 // import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import id.avalon.commands.*;
+import id.avalon.listeners.AssassinationListener;
 import id.avalon.listeners.CustomRoleListener;
 import id.avalon.listeners.CutsceneListener;
 import id.avalon.listeners.MissionListener;
 import id.avalon.listeners.TeamSelectionListener;
 import id.avalon.listeners.VotingListener;
+import id.avalon.listeners.PvPProtectionListener;
 import id.avalon.managers.VotingManager;
 import org.bukkit.Bukkit;
 import id.avalon.managers.GameManager;
@@ -62,13 +64,21 @@ public class AvalonPlugin extends JavaPlugin {
             new MissionListener(gameManager),
             this
         );
+        Bukkit.getPluginManager().registerEvents(
+            new AssassinationListener(gameManager),
+            this
+        );
+        Bukkit.getPluginManager().registerEvents(
+            new PvPProtectionListener(gameManager),
+            this
+        );
 
         getCommand("regis").setExecutor(new RegisCommand(gameManager));
         getCommand("unregis").setExecutor(new UnregisCommand(gameManager));
         getCommand("listplayer").setExecutor(new ListPlayerCommand(gameManager));
         getCommand("customrole").setExecutor(new CustomRoleCommand(gameManager));
         getCommand("cutscene").setExecutor(new CutsceneCommand(gameManager));
-        getCommand("roleinfo").setExecutor(new RoleInfoCommand());
+        getCommand("roleinfo").setExecutor(new RoleInfoCommand(gameManager));
         getCommand("roleinfo").setTabCompleter(new RoleInfoTabCompleter());
         getCommand("startgame").setExecutor(new StartGameCommand(gameManager));
         getCommand("debugroles").setExecutor(new DebugRolesCommand(gameManager));
