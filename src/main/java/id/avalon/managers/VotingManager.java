@@ -43,8 +43,8 @@ public class VotingManager {
     public static final String PDC_KEY_VOTE_TYPE = "vote_type";
     public static final String VOTE_SETUJU        = "setuju";
     public static final String VOTE_TOLAK         = "tolak";
-
-    private static final int VOTING_SECONDS      = 600; // 10 menit
+    // DEBUG
+    private static final int VOTING_SECONDS      = 10; // 10 menit
     private static final int MAX_REJECT_STREAK   = 5;   // Rule 1
 
     private final AvalonPlugin plugin;

@@ -21,7 +21,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.Repairable;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.enchantments.Enchantment;
-
+import org.bukkit.block.Block;
 import java.net.URL;
 import java.util.*;
 
@@ -61,6 +61,7 @@ public class GameManager {
     /** Misi yang sedang berjalan (1-5). */
     private int currentMission = 1;
     private int currentRound = 1;
+    private final Set<Integer> completedPlants = new HashSet<>();
     private int evilMissionFails = 0;
     /** Session pemilihan tim per Raja (UUID raja -> list nama yang sudah dipilih). */
     private final Map<UUID, List<String>> teamSelectionSessions = new HashMap<>();
@@ -81,6 +82,8 @@ public class GameManager {
     /** Apakah misi ini sudah disabotase. */
     private boolean missionSabotaged = false;
     private int sabotageCount = 0;
+    /** Index tanaman di PLANT_LOCATIONS yang terakhir berhasil dipanen (untuk cutscene). */
+    private int lastCollectedPlantIndex = 0;
     private final Set<UUID> sabotagedPlayers = new HashSet<>();
     /** Task countdown end-mission. */
     private BukkitTask endMissionCountdownTask;
@@ -88,7 +91,8 @@ public class GameManager {
     // ── Discussion state ──────────────────────────────────────────────────────
     private static final String SKIP_TEXTURE =
         "http://textures.minecraft.net/texture/65a84e6394baf8bd795fe747efc582cde9414fccf2f1c8608f1be18c0e079138";
-    private static final int DISCUSSION_SECONDS = 600; // 10 menit
+    // DEBUG
+    private static final int DISCUSSION_SECONDS = 10; // 10 menit
     private BukkitTask discussionTask;
     /** UUID player yang sudah vote skip di fase diskusi. */
     private final Set<UUID> discussionSkipVotes = new HashSet<>();
@@ -99,7 +103,8 @@ public class GameManager {
     private BukkitTask discussionHeadAnimTask;
 
     // ── Assassination state ───────────────────────────────────────────────────
-    private static final int ASSASSINATION_SECONDS = 600; // 10 menit
+    // DEBUG
+    private static final int ASSASSINATION_SECONDS = 10; // 10 menit
     /** Apakah fase assassination sedang aktif. */
     private boolean assassinationActive = false;
     /** Task countdown fase assassination. */
@@ -137,18 +142,18 @@ public class GameManager {
     private static final int BASE_Y = 74;
     private static final int BASE_Z = -379;
 
-    // ── Koordinat sabotage blok (Rule 4) ─────────────────────────────────────
-    private static final int SABOTAGE_BLOCK_X = -40;
-    private static final int SABOTAGE_BLOCK_Y = 67;
-    private static final int SABOTAGE_BLOCK_Z = -119;
-
-    // ── Koordinat deposit ───────────────────────────────────────────
-    private static final double DEPOSIT_X = 4.2;
-    private static final double DEPOSIT_Y = 74.3;
-    private static final double DEPOSIT_Z = -376.9;
-
-    private static final float DEPOSIT_YAW = -116f;
-    private static final float DEPOSIT_PITCH = -15.4f;
+    // ── Koordinat & material tanaman misi ────────────────────────────────────
+    // Index 0: Pitcher Plant (original), 1: Torchflower, 2: Spore Blossom
+    public static final int[][] PLANT_LOCATIONS = {
+        {-40, 67, -119},   // Pitcher Plant
+        {163, -13, -294},  // Torchflower
+        {19, 241, -282},   // Spore Blossom
+    };
+    public static final Material[] PLANT_MATERIALS = {
+        Material.PITCHER_PLANT,
+        Material.TORCHFLOWER,
+        Material.SPORE_BLOSSOM,
+    };
 
     // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -287,13 +292,13 @@ public class GameManager {
      */
     public void rotateKing() {
         if (kingOrder.isEmpty()) return;
-        currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
-        teamSelectionSessions.clear();
-        announceKing();
-        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        // currentKingIndex = kingOrder.indexOf("itslyricss");
+        // currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
         // teamSelectionSessions.clear();
         // announceKing();
+        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
+        currentKingIndex = kingOrder.indexOf("itslyricss");
+        teamSelectionSessions.clear();
+        announceKing();
     }
 
     /** Umumkan siapa Raja saat ini ke semua player. */
@@ -1010,17 +1015,17 @@ public class GameManager {
         });
 
         // Pilih Raja pertama secara acak
-        int randomStart = (int) (Math.random() * sorted.size());
+        // int randomStart = (int) (Math.random() * sorted.size());
         // DEBUG — (KODE ASLI JANGAN DIHAPUS!)
-        // int randomStart = sorted.indexOf("itslyricss");
+        int randomStart = sorted.indexOf("itslyricss");
         for (int i = 0; i < sorted.size(); i++) {
             kingOrder.add(sorted.get((randomStart + i) % sorted.size()));
         }
 
         currentKingIndex = 0;
-        String kingName = kingOrder.get(0);
+        // String kingName = kingOrder.get(0);
         // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        // String kingName = "itslyricss";
+        String kingName = "itslyricss";
 
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
@@ -1225,7 +1230,7 @@ public class GameManager {
             Component.text("Sudah satu bulan lamanya pak fred tidak sadarkan diri", NamedTextColor.YELLOW),
             Component.text("Konon katanya ada satu ramuan yang dapat menyembuhkannya", NamedTextColor.YELLOW),
             Component.text("Ramuan yang dibuat dengan 3 tanaman langka", NamedTextColor.YELLOW),
-            Component.text("Pitcher plant, Torch flower, Cactus flower", Style.style(NamedTextColor.GOLD, TextDecoration.ITALIC)),
+            Component.text("Pitcher plant, Torch flower, Spore Blossom", Style.style(NamedTextColor.GOLD, TextDecoration.ITALIC)),
             Component.text("Hanya ada satu orang yang dapat menyembuhkannya", NamedTextColor.YELLOW),
             Component.text("MERLIN", NamedTextColor.RED).decorate(TextDecoration.BOLD)
                 .append(Component.text(", sang penyihir terhebat", NamedTextColor.GOLD)),
@@ -1270,6 +1275,7 @@ public class GameManager {
 
         world.getBlockAt(BASE_X, BASE_Y, BASE_Z).setType(Material.WATER_CAULDRON);
         world.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z).setType(Material.CAMPFIRE);
+        placeAllMissionPlants(world);
         placeSlabsAndSeat(world, activePlayers);
         delayedTasks.add(
             new BukkitRunnable() {
@@ -1328,18 +1334,11 @@ public class GameManager {
     // ===== MISSION PHASE =====
 
     /**
-     * Mendapatkan material tanaman berdasarkan nomor misi.
-     * Rule 3: Misi 1 = Pitcher Plant, Misi 2 = Torchflower, Misi 3 = Cactus
-     * Jika misi ke-2 ronde pertama gagal → misi pertama ronde 2 pakai Pitcher Plant lagi.
-     * Mapping: currentMission 1→PitcherPlant, 2→Torchflower, 3→Cactus, 4→Torchflower, 5→Cactus
+     * Mendapatkan index PLANT_LOCATIONS/PLANT_MATERIALS berdasarkan nomor misi.
+     * Cycle: misi 1→0 (Pitcher), 2→1 (Torchflower), 3→2 (Spore Blossom), ulang.
      */
-    private Material getMissionPlant(int mission) {
-        return switch (mission) {
-            case 1 -> Material.PITCHER_PLANT;
-            case 2 -> Material.TORCHFLOWER;
-            case 3 -> Material.CACTUS_FLOWER;
-            default -> Material.PITCHER_PLANT;
-        };
+    private int getMissionPlantIndex(int mission) {
+        return (mission - 1) % PLANT_LOCATIONS.length;
     }
 
     /**
@@ -1375,10 +1374,33 @@ public class GameManager {
     }
     public boolean isMissionPlant(ItemStack item) {
         if (item == null) return false;
-
         return item.getType() == Material.PITCHER_PLANT
                 || item.getType() == Material.TORCHFLOWER
-                || item.getType() == Material.CACTUS_FLOWER;
+                || item.getType() == Material.SPORE_BLOSSOM;
+    }
+
+    /** Cek apakah player termasuk tim misi yang sedang berjalan. */
+    public boolean isInMissionTeam(org.bukkit.entity.Player player) {
+        return currentMissionTeam.contains(player.getName());
+    }
+
+    /** Cari index tanaman aktif (non-AIR) terdekat dari player. Return -1 jika tidak ada. */
+    private int getNearestActivePlantIndex(org.bukkit.entity.Player player, World world) {
+        int nearestIndex = -1;
+        double nearestDist = Double.MAX_VALUE;
+        for (int i = 0; i < PLANT_LOCATIONS.length; i++) {
+            int[] loc = PLANT_LOCATIONS[i];
+            Block b = world.getBlockAt(loc[0], loc[1], loc[2]);
+            if (b.getType() != Material.AIR && b.getType() != Material.CAVE_AIR) {
+                double dist = player.getLocation().distanceSquared(
+                    new Location(world, loc[0] + 0.5, loc[1], loc[2] + 0.5));
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestIndex = i;
+                }
+            }
+        }
+        return nearestIndex;
     }
 
     /**
@@ -1413,39 +1435,10 @@ public class GameManager {
 
         World world = getGameWorld();
 
-        // ── Taruh tanaman di koordinat misi ──────────────────────────────────
-        Material plantMaterial = getMissionPlant(currentMission);
-
-        if (plantMaterial == Material.PITCHER_PLANT) {
-
-            world.getBlockAt(
-                SABOTAGE_BLOCK_X,
-                SABOTAGE_BLOCK_Y,
-                SABOTAGE_BLOCK_Z
-            ).setBlockData(
-                Bukkit.createBlockData("minecraft:pitcher_plant[half=lower]")
-            );
-
-            world.getBlockAt(
-                SABOTAGE_BLOCK_X,
-                SABOTAGE_BLOCK_Y + 1,
-                SABOTAGE_BLOCK_Z
-            ).setBlockData(
-                Bukkit.createBlockData("minecraft:pitcher_plant[half=upper]")
-            );
-
-        } else {
-
-            world.getBlockAt(
-                SABOTAGE_BLOCK_X,
-                SABOTAGE_BLOCK_Y,
-                SABOTAGE_BLOCK_Z
-            ).setType(plantMaterial);
-
-        }
-
-        missionPlantLocation = new Location(world,
-            SABOTAGE_BLOCK_X + 0.5, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z + 0.5);
+        // ── Re-taruh semua tanaman (restore yang sudah habis di misi sebelumnya) ─
+        placeAllMissionPlants(world);
+        // missionPlantLocation tidak dipakai lagi (multi-location), set null
+        missionPlantLocation = null;
 
         for (String playerName : getRegisteredPlayers()) {
             Player p = Bukkit.getPlayerExact(playerName);
@@ -1495,6 +1488,46 @@ public class GameManager {
 
         // ── Block checker: pantau block di koor misi ─────────────────────────
         startMissionBlockChecker(team, world);
+    }
+
+    /**
+     * Taruh semua tanaman misi di koordinat masing-masing.
+     * Dipanggil di awal game dan di awal setiap misi (re-place yang hilang).
+     */
+    private void placeAllMissionPlants(World world) {
+        for (int i = 0; i < PLANT_LOCATIONS.length; i++) {
+            if (completedPlants.contains(i)) {
+                continue;
+            }
+            int x = PLANT_LOCATIONS[i][0];
+            int y = PLANT_LOCATIONS[i][1];
+            int z = PLANT_LOCATIONS[i][2];
+            Material mat = PLANT_MATERIALS[i];
+
+            if (mat == Material.PITCHER_PLANT) {
+                world.getBlockAt(x, y, z).setBlockData(
+                    Bukkit.createBlockData("minecraft:pitcher_plant[half=lower]"));
+                world.getBlockAt(x, y + 1, z).setBlockData(
+                    Bukkit.createBlockData("minecraft:pitcher_plant[half=upper]"));
+            } else {
+                world.getBlockAt(x, y, z).setType(mat);
+            }
+        }
+    }
+
+    /**
+     * Hapus semua tanaman misi dari dunia (dipakai saat cleanup).
+     */
+    private void clearAllMissionPlants(World world) {
+        for (int i = 0; i < PLANT_LOCATIONS.length; i++) {
+            int x = PLANT_LOCATIONS[i][0];
+            int y = PLANT_LOCATIONS[i][1];
+            int z = PLANT_LOCATIONS[i][2];
+            world.getBlockAt(x, y, z).setType(Material.AIR);
+            if (PLANT_MATERIALS[i] == Material.PITCHER_PLANT) {
+                world.getBlockAt(x, y + 1, z).setType(Material.AIR);
+            }
+        }
     }
 
     /**
@@ -1602,7 +1635,7 @@ public class GameManager {
 
     /**
      * Dipanggil dari MissionListener saat player klik kanan item "Sabotase".
-     * Ubah blok di koor misi jadi Dead Bush. Block checker yang akan deteksi dan trigger countdown.
+     * Hapus tanaman terdekat, lalu langsung trigger countdown.
      */
     public void triggerSabotage(Player player) {
         if (!missionActive) return;
@@ -1627,27 +1660,48 @@ public class GameManager {
             );
             return;
         }
+        if (!needsTwoFails && sabotageCount < 1) return;
 
-        if (!needsTwoFails && sabotageCount < 1) {
-            return;
-        }
         missionSabotaged = true;
 
+        // Hapus tanaman aktif terdekat dari si saboteur
         World world = getGameWorld();
         if (world != null) {
-            world.getBlockAt(SABOTAGE_BLOCK_X, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z)
-                .setType(Material.DEAD_BUSH);
-            world.getBlockAt(
-                SABOTAGE_BLOCK_X,
-                SABOTAGE_BLOCK_Y + 1,
-                SABOTAGE_BLOCK_Z
-            ).setType(Material.AIR);
+            int idx = getNearestActivePlantIndex(player, world);
+            if (idx >= 0) {
+                int[] loc = PLANT_LOCATIONS[idx];
+                for (int i = 0; i < PLANT_LOCATIONS.length; i++) {
+
+                    if (completedPlants.contains(i)) {
+                        continue;
+                    }
+
+                    int[] plantLoc = PLANT_LOCATIONS[i];
+
+                    if (PLANT_MATERIALS[i] == Material.SPORE_BLOSSOM) {
+
+                        world.getBlockAt(
+                                plantLoc[0],
+                                plantLoc[1],
+                                plantLoc[2]
+                        ).setType(Material.HANGING_ROOTS);
+
+                    } else {
+
+                        world.getBlockAt(
+                                plantLoc[0],
+                                plantLoc[1],
+                                plantLoc[2]
+                        ).setType(Material.DEAD_BUSH);
+
+                    }
+                }
+            }
         }
 
         player.sendMessage(Component.text(" "));
         player.sendMessage(Component.text("  ☠ Kamu berhasil melakukan sabotase!", NamedTextColor.RED).decorate(TextDecoration.BOLD));
         player.sendMessage(Component.text(" "));
-        // Block checker akan mendeteksi dead_bush + proximity dan memanggil triggerSabotageCountdown()
     }
 
     /**
@@ -1661,6 +1715,7 @@ public class GameManager {
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
+        
 
         // Reset slowness
         for (String name : currentMissionTeam) {
@@ -1672,6 +1727,15 @@ public class GameManager {
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.DARK_RED));
         broadcast(Component.text("  ☠ Misi telah di sabotase!", NamedTextColor.RED).decorate(TextDecoration.BOLD));
         broadcast(Component.text("  Kembali lagi nanti!", NamedTextColor.DARK_RED));
+        broadcast(
+            Component.text("  Jumlah sabotase: ", NamedTextColor.GRAY)
+                .append(
+                    Component.text(
+                        sabotageCount,
+                        NamedTextColor.RED
+                    ).decorate(TextDecoration.BOLD)
+                )
+        );
         broadcast(
             Component.text("  Anggota tim: ", NamedTextColor.WHITE)
                 .append(Component.text(teamMembers, NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
@@ -1716,56 +1780,72 @@ public class GameManager {
     // ── Proximity Checker ─────────────────────────────────────────────────────
 
     /**
-     * Cek setiap tick:
-     * - Blok tanaman hancur (AIR) → misi sukses
-     * - Blok berubah jadi DEAD_BUSH (sabotase) + ada player dalam 10 blok → mulai countdown 20 detik teleport
+     * Cek setiap tick semua lokasi tanaman:
+     * - Blok tanaman hancur menjadi AIR (& !missionSabotaged) → misi sukses
+     * - Sabotase di-trigger langsung dari triggerSabotage(), tidak lewat block checker
      */
     private void startMissionBlockChecker(List<String> team, World world) {
         stopProximityChecker();
-        if (missionPlantLocation == null) return;
-
-        final Material[] originalPlant = { getMissionPlant(currentMission) };
-        // Track apakah countdown sabotase sudah dimulai (agar tidak dobel)
-        final boolean[] sabotageCountdownStarted = { false };
 
         proximityTask = new BukkitRunnable() {
             @Override
             public void run() {
                 if (!missionActive || !gameRunning) { cancel(); return; }
 
-                org.bukkit.block.Block plantBlock = world.getBlockAt(
-                    SABOTAGE_BLOCK_X, SABOTAGE_BLOCK_Y, SABOTAGE_BLOCK_Z);
-                Material current = plantBlock.getType();
+                for (int i = 0; i < PLANT_LOCATIONS.length; i++) {
+                    if (completedPlants.contains(i)) {
+                        continue;
+                    }
+                    int[] loc = PLANT_LOCATIONS[i];
+                    Block plantBlock = world.getBlockAt(loc[0], loc[1], loc[2]);
 
-                // ── Misi sukses: blok tanaman hancur menjadi AIR ─────────────
-                if (current == Material.AIR && !missionSabotaged) {
-                    cancel();
-                    stopSabotageMechanic();
-                    finishMission(true);
-                    return;
-                }
+                    if ((plantBlock.getType() == Material.DEAD_BUSH
+                            || plantBlock.getType() == Material.HANGING_ROOTS)
+                            && missionSabotaged) {
 
-                // ── Sabotase: blok berubah jadi DEAD_BUSH ────────────────────
-                if (current == Material.DEAD_BUSH && missionSabotaged && !sabotageCountdownStarted[0]) {
-                    // Cek apakah ada player tim dalam radius 10 blok
-                    for (String name : team) {
-                        Player p = Bukkit.getPlayerExact(name);
-                        if (p == null || !p.isOnline()) continue;
-                        if (p.getWorld().equals(world)) {
-                            double dist = p.getLocation().distance(missionPlantLocation);
-                            if (dist <= 10.0) {
-                                sabotageCountdownStarted[0] = true;
+                        Location plantLoc = new Location(
+                                world,
+                                loc[0] + 0.5,
+                                loc[1],
+                                loc[2] + 0.5
+                        );
+
+                        for (String name : team) {
+
+                            Player p = Bukkit.getPlayerExact(name);
+
+                            if (p == null || !p.isOnline())
+                                continue;
+
+                            if (!p.getWorld().equals(world))
+                                continue;
+
+                            if (p.getLocation().distance(plantLoc) <= 10.0) {
+
                                 cancel();
+
                                 stopSabotageMechanic();
-                                // Pesan sabotase & countdown 20 detik
+                                
+
                                 triggerSabotageCountdown();
                                 return;
                             }
                         }
                     }
+
+                    // Tanaman dipanen (menjadi AIR) oleh anggota tim
+                    if (plantBlock.getType() == Material.AIR
+                            || plantBlock.getType() == Material.CAVE_AIR) {
+                        cancel();
+                        completedPlants.add(i);
+                        lastCollectedPlantIndex = i;
+                        stopSabotageMechanic();
+                        finishMission(true);
+                        return;
+                    }
                 }
             }
-        }.runTaskTimer(plugin, 5L, 5L); // Cek tiap 0.25 detik untuk respons cepat
+        }.runTaskTimer(plugin, 5L, 5L);
     }
 
     private void stopProximityChecker() {
@@ -1782,11 +1862,13 @@ public class GameManager {
      * Sabotase ditangani oleh triggerSabotageCountdown().
      */
     private void finishMission(boolean success) {
+        String teamMembers = String.join(", ", currentMissionTeam);
         if (!missionActive) return;
         missionActive = false;
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
+        
 
         // Reset slowness untuk semua team member
         for (String name : currentMissionTeam) {
@@ -1800,7 +1882,20 @@ public class GameManager {
             broadcast(Component.text(" "));
             broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GREEN));
             broadcast(Component.text("  ✅ Misi ke-" + currentRound + " berhasil!", NamedTextColor.GREEN).decorate(TextDecoration.BOLD));
-            broadcast(Component.text("  Tanaman berhasil dihancurkan oleh tim.", NamedTextColor.YELLOW));
+            broadcast(Component.text("  Tanaman berhasil didapatkan oleh tim.", NamedTextColor.YELLOW));
+            broadcast(
+                Component.text("  Jumlah sabotase: ", NamedTextColor.GRAY)
+                    .append(
+                        Component.text(
+                            sabotageCount,
+                            NamedTextColor.RED
+                        ).decorate(TextDecoration.BOLD)
+                    )
+            );
+            broadcast(
+                Component.text("  Anggota tim: ", NamedTextColor.WHITE)
+                    .append(Component.text(teamMembers, NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
+            );
             broadcast(Component.text("  Kamu akan diteleport kembali dalam 10 detik", NamedTextColor.GRAY));
             broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GREEN));
             broadcast(Component.text(" "));
@@ -1885,9 +1980,7 @@ public class GameManager {
         stand.setMarker(true);
 
         stand.getEquipment().setItemInMainHand(
-            new ItemStack(
-                getMissionPlant(currentMission)
-            )
+            new ItemStack(PLANT_MATERIALS[lastCollectedPlantIndex])
         );
 
         stand.setRightArmPose(
@@ -1927,7 +2020,7 @@ public class GameManager {
 
                     Color particleColor;
 
-                    switch (getMissionPlant(currentMission)) {
+                    switch (PLANT_MATERIALS[lastCollectedPlantIndex]) {
 
                         case PITCHER_PLANT:
                             particleColor = Color.fromRGB(0, 255, 255); // cyan
@@ -1937,9 +2030,10 @@ public class GameManager {
                             particleColor = Color.fromRGB(255, 215, 0); // gold
                             break;
 
-                        case CACTUS_FLOWER:
-                            particleColor = Color.fromRGB(255, 105, 180); // hot pink
+                        case SPORE_BLOSSOM:
+                            particleColor = Color.fromRGB(180, 100, 220); // ungu
                             break;
+
                         default:
                             particleColor = Color.WHITE;
                             break;
@@ -3084,6 +3178,7 @@ public class GameManager {
         stopHotbarLock();
         stopSabotageMechanic();
         stopProximityChecker();
+        
         stopAssassinationPhase();
 
         // Cancel voting jika sedang berjalan
@@ -3099,6 +3194,7 @@ public class GameManager {
         missionActive     = false;
         missionSabotaged  = false;
         missionPlantLocation = null;
+        completedPlants.clear();
         currentMissionTeam.clear();
         discussionActive = false;
         discussionAfterSuccess = false;
@@ -3164,6 +3260,7 @@ public class GameManager {
                 gameWorld.getBlockAt(BASE_X + pos[0], BASE_Y, BASE_Z + pos[1]).setType(Material.AIR);
             gameWorld.getBlockAt(BASE_X, BASE_Y, BASE_Z).setType(Material.AIR);
             gameWorld.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z).setType(Material.ORANGE_TERRACOTTA);
+            clearAllMissionPlants(gameWorld);
         }
     }
 }

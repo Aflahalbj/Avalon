@@ -10,25 +10,22 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 
 /**
  * Menangani mekanik misi:
  *  1. Klik kanan "Sabotase" → triggerSabotage (kubu jahat)
  *  2. Block break tanaman misi dengan shears di Adventure mode → izinkan (finishMission sukses)
  *  3. Cegah drop/pindah shears misi
+ *  4. Cancel fall damage untuk anggota tim misi
  */
 public class MissionListener implements Listener {
-
-    private static final int SABOTAGE_BLOCK_X = -40;
-    private static final int SABOTAGE_BLOCK_Y = 67;
-    private static final int SABOTAGE_BLOCK_Z = -119;
 
     private final GameManager gameManager;
 
@@ -125,7 +122,7 @@ public class MissionListener implements Listener {
      * memiliki tag can_destroy. Kita override dengan membatalkan cancel di event,
      * tapi hanya untuk:
      *  - Player membawa shears misi (Gunting / Sabotase)
-     *  - Blok yang dihancurkan adalah blok tanaman misi di koor yang tepat
+     *  - Blok yang dihancurkan adalah blok tanaman misi di salah satu koor PLANT_LOCATIONS
      *  - Misi sedang aktif
      */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
@@ -138,38 +135,51 @@ public class MissionListener implements Listener {
         ItemStack item = player.getInventory().getItemInMainHand();
         if (!gameManager.isMissionShears(item)) return;
 
-        // Hanya izinkan untuk blok tepat di koor misi
         org.bukkit.block.Block block = event.getBlock();
-        boolean isMissionPlantPos =
-                block.getX() == SABOTAGE_BLOCK_X
-                && block.getZ() == SABOTAGE_BLOCK_Z
-                && (
-                    block.getY() == SABOTAGE_BLOCK_Y
-                    || block.getY() == SABOTAGE_BLOCK_Y + 1
-                );
+        int bx = block.getX(), by = block.getY(), bz = block.getZ();
+
+        // Cek apakah blok berada di salah satu lokasi tanaman misi
+        boolean isMissionPlantPos = false;
+        for (int i = 0; i < GameManager.PLANT_LOCATIONS.length; i++) {
+            int[] loc = GameManager.PLANT_LOCATIONS[i];
+            if (bx == loc[0] && bz == loc[2]
+                    && (by == loc[1] || by == loc[1] + 1)) {
+                isMissionPlantPos = true;
+                break;
+            }
+        }
 
         if (!isMissionPlantPos) {
             event.setCancelled(true);
             return;
         }
 
-        // Cek bahwa blok ini memang tanaman misi yang valid (bukan dead bush)
+        // Cek bahwa blok ini memang tanaman misi yang valid
         Material blockType = block.getType();
-        if (blockType == Material.PITCHER_PLANT
-                || blockType == Material.TORCHFLOWER
-                || blockType == Material.CACTUS_FLOWER) {
+        boolean isValidPlant = false;
+        for (Material mat : GameManager.PLANT_MATERIALS) {
+            if (blockType == mat) { isValidPlant = true; break; }
+        }
 
-            // Izinkan block break — tidak batalkan event
+        if (isValidPlant) {
+            // Izinkan block break, beri item tanaman ke player
             event.setCancelled(false);
-            // Drop item dimatikan supaya tidak drop ke ground
             event.setDropItems(false);
-            player.getInventory().addItem(
-                new ItemStack(blockType)
-            );
-
+            // Berikan item dari material dasar (bukan block state half)
+            Material dropMat = blockType;
+            player.getInventory().addItem(new ItemStack(dropMat));
         } else {
-            // Blok bukan tanaman misi yang valid (misal dead bush) — cancel
             event.setCancelled(true);
         }
+    }
+
+    // ── Cancel fall damage untuk anggota tim misi ─────────────────────────────
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onFallDamage(EntityDamageEvent event) {
+        if (event.getCause() != EntityDamageEvent.DamageCause.FALL) return;
+        if (!(event.getEntity() instanceof Player player)) return;
+        if (!gameManager.isGameRunning()) return;
+        event.setCancelled(true);
     }
 }
