@@ -27,7 +27,7 @@ public class RoleInfoCommand implements CommandExecutor {
 
               §b§lMERLIN
             
-              §rMerlin adalah kunci dari penyembuhan Pak Fred.
+              §rMerlin adalah kunci dari penyembuhan ratu amaryn.
 
               §rHanya Merlin yang dapat membaca mantra penyembuhan.
 

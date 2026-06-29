@@ -11,11 +11,15 @@ import org.bukkit.*;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.entity.*;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
+
+import com.destroystokyo.paper.profile.ProfileProperty;
+
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.Repairable;
@@ -35,9 +39,19 @@ public class GameManager {
     private boolean cutsceneRunning  = false;
     private boolean gameRunning      = false;
 
+    //timer
+    private int revealSeconds = 20;
+    private int votingSeconds = 600;
+    private int discussionSeconds = 600;
+    private int evilDiscussionSeconds = 600;
+
     // Flag: sedang dalam fase reveal — dipakai CutsceneListener
     // supaya eject dari avalon_seat tidak di-cancel saat perlu berdiri
     private boolean revealPhaseActive = false;
+    private int currentRevealPhase = -1;
+
+    private String currentRevealLabel = "";
+    private int currentRevealSeconds = -1;
 
     private BukkitTask cutsceneTask;
     private BukkitTask countdownTask;
@@ -88,11 +102,25 @@ public class GameManager {
     /** Task countdown end-mission. */
     private BukkitTask endMissionCountdownTask;
 
+    // ── Offline player handling ───────────────────────────────────────────────
+    /** Grace period (detik) sebelum raja/assassin auto-diganti saat offline. */
+    private static final int OFFLINE_GRACE_SECONDS = 90;
+    /** Grace task raja offline → auto-rotasi. */
+    private BukkitTask kingOfflineGraceTask = null;
+    /** Grace task assassin offline (fase bow) → auto-kubu-baik-menang. */
+    private BukkitTask assassinOfflineGraceTask = null;
+    /** True saat fase bow assassin aktif (setelah endAssassinationDiscussion). */
+    private boolean assassinBowActive = false;
+    /** Mannequin yang dispawn untuk player offline (nama → entity). */
+    private final Map<String, Entity> offlineMannequins = new HashMap<>();
+    /** Track state visual tiap player secara eksplisit (bukan dari pitch/vehicle). */
+    private final Map<UUID, OfflineState> playerStateMap = new HashMap<>();
+    private final Map<String, OfflineMannequinData> offlinePlayerRefs = new HashMap<>();
+
     // ── Discussion state ──────────────────────────────────────────────────────
     private static final String SKIP_TEXTURE =
         "http://textures.minecraft.net/texture/65a84e6394baf8bd795fe747efc582cde9414fccf2f1c8608f1be18c0e079138";
     // DEBUG
-    private static final int DISCUSSION_SECONDS = 10; // 10 menit
     private BukkitTask discussionTask;
     /** UUID player yang sudah vote skip di fase diskusi. */
     private final Set<UUID> discussionSkipVotes = new HashSet<>();
@@ -104,7 +132,6 @@ public class GameManager {
 
     // ── Assassination state ───────────────────────────────────────────────────
     // DEBUG
-    private static final int ASSASSINATION_SECONDS = 10; // 10 menit
     /** Apakah fase assassination sedang aktif. */
     private boolean assassinationActive = false;
     /** Task countdown fase assassination. */
@@ -122,32 +149,32 @@ public class GameManager {
 
     // ── Koordinat ────────────────────────────────────────────────────────────
 
-    private static final double MANNEQUIN_X   = -60.5;
-    private static final double MANNEQUIN_Y   = 74.6;
-    private static final double MANNEQUIN_Z   = -417;
+    private static final double MANNEQUIN_X   = -19.5;
+    private static final double MANNEQUIN_Y   = 80.6;
+    private static final double MANNEQUIN_Z   = -422;
     private static final float  MANNEQUIN_YAW = 270f;
 
-    private static final double SPECTATOR_X     = -61.391;
-    private static final double SPECTATOR_Y     = 75.511;
-    private static final double SPECTATOR_Z     = -415.740;
-    private static final float  SPECTATOR_YAW   = -164f;
-    private static final float  SPECTATOR_PITCH = 49.3f;
+    private static final double SPECTATOR_X     = -22.14;
+    private static final double SPECTATOR_Y     = 82.686;
+    private static final double SPECTATOR_Z     = -418.935;
+    private static final float  SPECTATOR_YAW   = -141.2f;
+    private static final float  SPECTATOR_PITCH = 40.3f;
 
     private static final int[][] PLAYER_SLAB_POSITIONS = {
         {0, 6}, {0, -6}, {-5, 2}, {5, -2}, {-5, -2},
         {5, 2}, {-3, 5}, {3, -5}, {-3, -5}, {3, 5},
     };
 
-    private static final int BASE_X = 7;
-    private static final int BASE_Y = 74;
-    private static final int BASE_Z = -379;
+    public final int BASE_X = -20;
+    public final int BASE_Y = 80;
+    public final int BASE_Z = -383;
 
     // ── Koordinat & material tanaman misi ────────────────────────────────────
     // Index 0: Pitcher Plant (original), 1: Torchflower, 2: Spore Blossom
     public static final int[][] PLANT_LOCATIONS = {
-        {-40, 67, -119},   // Pitcher Plant
-        {163, -13, -294},  // Torchflower
-        {19, 241, -282},   // Spore Blossom
+        {-45, 71, -177},   // Pitcher Plant
+        {69, 11, -275},  // Torchflower
+        {0, 166, -286},   // Spore Blossom
     };
     public static final Material[] PLANT_MATERIALS = {
         Material.PITCHER_PLANT,
@@ -167,6 +194,38 @@ public class GameManager {
         return votingManager;
     }
 
+        public int getRevealSeconds() {
+        return revealSeconds;
+    }
+
+    public void setRevealSeconds(int revealSeconds) {
+        this.revealSeconds = revealSeconds;
+    }
+
+    public int getVotingSeconds() {
+        return votingSeconds;
+    }
+
+    public void setVotingSeconds(int votingSeconds) {
+        this.votingSeconds = votingSeconds;
+    }
+
+    public int getDiscussionSeconds() {
+        return discussionSeconds;
+    }
+
+    public void setDiscussionSeconds(int discussionSeconds) {
+        this.discussionSeconds = discussionSeconds;
+    }
+
+    public int getEvilDiscussionSeconds() {
+        return evilDiscussionSeconds;
+    }
+
+    public void setEvilDiscussionSeconds(int evilDiscussionSeconds) {
+        this.evilDiscussionSeconds = evilDiscussionSeconds;
+    }
+
     public GameManager(AvalonPlugin plugin) {
         this.plugin = plugin;
         new BukkitRunnable() {
@@ -175,13 +234,36 @@ public class GameManager {
 
                 for (Player p : Bukkit.getOnlinePlayers()) {
 
-                    if (!isCameraLocked(p))
+                    // Camera lock
+                    if (isCameraLocked(p)) {
+                        p.setRotation(
+                            getLockedYaw(p),
+                            getLockedPitch(p)
+                        );
+                    }
+
+                    // Green wool step height
+                    AttributeInstance step = p.getAttribute(Attribute.STEP_HEIGHT);
+
+                    if (step == null)
                         continue;
 
-                    p.setRotation(
-                        getLockedYaw(p),
-                        getLockedPitch(p)
-                    );
+                    boolean nearGreenWool = false;
+                    Location loc = p.getLocation();
+
+                    for (int x = -1; x <= 1 && !nearGreenWool; x++) {
+                        for (int y = -1; y <= 2 && !nearGreenWool; y++) {
+                            for (int z = -1; z <= 1; z++) {
+
+                                if (loc.clone().add(x, y, z).getBlock().getType() == Material.GREEN_WOOL) {
+                                    nearGreenWool = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    step.setBaseValue(nearGreenWool ? 10.0 : 0.6);
                 }
             }
         }.runTaskTimer(plugin, 0L, 1L);
@@ -292,13 +374,13 @@ public class GameManager {
      */
     public void rotateKing() {
         if (kingOrder.isEmpty()) return;
-        // currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
-        // teamSelectionSessions.clear();
-        // announceKing();
-        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        currentKingIndex = kingOrder.indexOf("itslyricss");
+        currentKingIndex = (currentKingIndex + 1) % kingOrder.size();
         teamSelectionSessions.clear();
         announceKing();
+        // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
+        // currentKingIndex = kingOrder.indexOf("itslyricss");
+        // teamSelectionSessions.clear();
+        // announceKing();
     }
 
     /** Umumkan siapa Raja saat ini ke semua player. */
@@ -551,13 +633,11 @@ public class GameManager {
      * Player masih tetap duduk di ArmorStand seat-nya.
      */
     private void sitAndBlind(Player p) {
-        float yaw = yawTowardBase(
-            p.getLocation().getX(),
-            p.getLocation().getZ()
-        );
+        float yaw = yawTowardBase(p.getLocation().getX(), p.getLocation().getZ());
         p.setRotation(yaw, 90f);
         lockCamera(p, yaw, 90f);
         applyRevealEffects(p);
+        playerStateMap.put(p.getUniqueId(), OfflineState.SEATED);
     }
 
     /**
@@ -574,10 +654,13 @@ public class GameManager {
         revealPhaseActive = true;
 
         Entity vehicle = p.getVehicle();
-        if (vehicle != null)
+        if (vehicle != null) {
             vehicle.eject();
+        }
 
-        revealPhaseActive = false;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            revealPhaseActive = false;
+        });
         p.getAttribute(Attribute.SCALE).setBaseValue(1.5);
         clearRevealEffects(p);
 
@@ -589,6 +672,8 @@ public class GameManager {
             p.getLocation().getZ()
         );
         p.setRotation(yaw, 0f);
+        playerStateMap.put(p.getUniqueId(), OfflineState.VIEWER);
+        updateOfflineMannequin(p.getName(), OfflineState.VIEWER);
     }
 
     /**
@@ -601,15 +686,23 @@ public class GameManager {
      */
     private void standAsTarget(Player p) {
         revealPhaseActive = true;
+
         Entity vehicle = p.getVehicle();
-        if (vehicle != null) vehicle.eject();
-        revealPhaseActive = false;
+        if (vehicle != null) {
+            vehicle.eject();
+        }
+
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            revealPhaseActive = false;
+        });
 
         float yaw = yawTowardBase(p.getLocation().getX(), p.getLocation().getZ());
         p.getAttribute(Attribute.SCALE).setBaseValue(1.5);
         lockCamera(p, yaw, 90f);
         lockMovement(p);
         p.setRotation(yaw, 90f);
+        playerStateMap.put(p.getUniqueId(), OfflineState.TARGET);
+        updateOfflineMannequin(p.getName(), OfflineState.TARGET);
     }
 
     /**
@@ -620,8 +713,13 @@ public class GameManager {
         if (p.getAttribute(Attribute.SCALE) != null) {
             p.getAttribute(Attribute.SCALE).setBaseValue(1.0);
         }
-        Location loc = p.getLocation().clone();
-        float yaw = yawTowardBase(loc.getX(), loc.getZ());
+        int index = registeredPlayers.indexOf(p.getName());
+        int[] pos = PLAYER_SLAB_POSITIONS[index];
+
+        double x = BASE_X + pos[0] + 0.5;
+        double y = BASE_Y + 0.5;
+        double z = BASE_Z + pos[1] + 0.5;
+        float yaw = yawTowardBase(x, z);
 
         // Pastikan revealPhaseActive false saat respawn — listener akan block eject lagi
         revealPhaseActive = false;
@@ -631,7 +729,7 @@ public class GameManager {
         }
 
         ArmorStand seat = world.spawn(
-            new Location(world, loc.getX(), loc.getY(), loc.getZ(), yaw, 0),
+            new Location(world, x, y, z, yaw, 0),
             ArmorStand.class, as -> {
                 as.setVisible(false);
                 as.setGravity(false);
@@ -643,6 +741,8 @@ public class GameManager {
         );
         seat.setRotation(yaw, 0);
         seat.addPassenger(p);
+        playerStateMap.put(p.getUniqueId(), OfflineState.SEATED);
+        updateOfflineMannequin(p.getName(), OfflineState.SEATED);
     }
 
     /**
@@ -656,7 +756,7 @@ public class GameManager {
         }
 
         revealCountdownTask = new BukkitRunnable() {
-            int seconds = 10;
+            int seconds = revealSeconds;
 
             @Override
             public void run() {
@@ -665,15 +765,17 @@ public class GameManager {
                     cancel();
                     return;
                 }
-
+                
                 if (seconds < 0) {
                     cancel();
                     revealCountdownTask = null;
                     onDone.run();
                     return;
                 }
-
-                for (Player p : players) {
+                
+                currentRevealLabel = label;
+                currentRevealSeconds = seconds;
+                for (Player p : getOnlinePlayers()) {
                     if (!p.isOnline()) continue;
                     if (seconds == 0) {
                         p.sendActionBar(Component.text("✔ " + label + " — selesai", NamedTextColor.GREEN));
@@ -707,8 +809,9 @@ public class GameManager {
                 if (ticks >= 40) {
                     cancel();
 
-                    for (Player p : players) {
-                        if (!p.isOnline()) continue;
+                    for (String name : registeredPlayers) {
+                        Player p = Bukkit.getPlayerExact(name);
+                        if (p == null || !p.isOnline()) continue;
                         Role realRole = getRole(p);
                         p.sendTitle("§6Mengocok Peran", "§e" + realRole.name(), 10, 60, 20);
                         p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1f);
@@ -731,8 +834,9 @@ public class GameManager {
                     return;
                 }
 
-                for (Player p : players) {
-                    if (!p.isOnline()) continue;
+                for (String name : registeredPlayers) {
+                    Player p = Bukkit.getPlayerExact(name);
+                    if (p == null || !p.isOnline()) continue;
                     Role rnd = availableRoles.get((int) (Math.random() * availableRoles.size()));
                     p.sendTitle("§6Mengocok Peran", "§f" + rnd.name(), 0, 10, 0);
                     p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
@@ -753,6 +857,7 @@ public class GameManager {
      */
     private void runRevealPhase(List<Player> players, int phase) {
         if (!gameRunning) return;
+        currentRevealPhase = phase;
 
         World world = getGameWorld();
 
@@ -763,8 +868,10 @@ public class GameManager {
                 // Pastikan revealPhaseActive false sebelum sitAndBlind
                 revealPhaseActive = false;
 
-                for (Player p : players) {
-                    if (p.isOnline()) sitAndBlind(p);
+                for (String name : registeredPlayers) {
+                    Player p = Bukkit.getPlayerExact(name);
+                    if (p == null || !p.isOnline()) continue;
+                    sitAndBlind(p);
                 }
 
                 broadcast(Component.text(" "));
@@ -793,7 +900,8 @@ public class GameManager {
 
                 Player merlin = getPlayerWithRole(players, Role.MERLIN);
 
-                List<Player> evilVisible = players.stream()
+                List<Player> evilVisible = registeredPlayers.stream()
+                    .map(Bukkit::getPlayerExact).filter(Objects::nonNull)
                     .filter(p -> getRole(p) != null && getRole(p).isEvil() && getRole(p) != Role.MORDRED && p.isOnline())
                     .toList();
 
@@ -805,6 +913,17 @@ public class GameManager {
                 merlin.sendMessage(Component.text(" "));
                 merlin.sendMessage(Component.text("  👁 Yang berdiri adalah kubu jahat", NamedTextColor.RED).decorate(TextDecoration.BOLD));
                 merlin.sendMessage(Component.text("  (Mordred tidak terlihat olehmu)", NamedTextColor.DARK_GRAY).decorate(TextDecoration.ITALIC));
+
+                // Beri tahu Merlin jika ada target yang sedang offline
+                registeredPlayers.stream()
+                    .map(Bukkit::getPlayerExact).filter(Objects::nonNull)
+                    .filter(p -> getRole(p) != null && getRole(p).isEvil()
+                              && getRole(p) != Role.MORDRED && !p.isOnline())
+                    .forEach(p -> merlin.sendMessage(
+                        Component.text("  ⚠ " + p.getName() + " (kubu jahat) sedang offline.", NamedTextColor.GRAY)
+                            .decorate(TextDecoration.ITALIC)
+                    ));
+
                 merlin.sendMessage(Component.text(" "));
 
                 broadcast(Component.text("  [Merlin] membuka matanya...", NamedTextColor.YELLOW));
@@ -856,6 +975,27 @@ public class GameManager {
                 percival.sendMessage(Component.text("  👁 Yang berdiri adalah Merlin & Morgana.", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
                 percival.sendMessage(Component.text(" "));
 
+                // Beri tahu Percival jika Merlin atau Morgana offline
+                List<String> offlineTargets = new ArrayList<>();
+
+                if (merlin != null && !merlin.isOnline()) {
+                    offlineTargets.add(merlin.getName());
+                }
+
+                if (morgana != null && !morgana.isOnline()) {
+                    offlineTargets.add(morgana.getName());
+                }
+
+                for (String name : offlineTargets) {
+                    percival.sendMessage(
+                        Component.text(
+                            "  ⚠ " + name + " (Merlin/Morgana) sedang offline.",
+                            NamedTextColor.GRAY
+                        ).decorate(TextDecoration.ITALIC)
+                    );
+                }
+                percival.sendMessage(Component.text(" "));
+
                 broadcast(Component.text("  [Percival] membuka matanya...", NamedTextColor.YELLOW));
 
                 revealCountdown(players, "Percival melihat", () -> {
@@ -881,7 +1021,8 @@ public class GameManager {
 
             // ── Phase 3: Kubu jahat (kecuali Oberon) saling kenal ────────
             case 3 -> {
-                List<Player> evilKnow = players.stream()
+                List<Player> evilKnow = registeredPlayers.stream()
+                    .map(Bukkit::getPlayerExact).filter(Objects::nonNull)
                     .filter(p -> getRole(p) != null && getRole(p).isEvil()
                               && getRole(p) != Role.OBERON && p.isOnline())
                     .toList();
@@ -897,6 +1038,19 @@ public class GameManager {
                 for (Player p : evilKnow) {
                     p.sendMessage(Component.text(" "));
                     p.sendMessage(Component.text("  🗡 Yang berdiri adalah rekan kubu jahatmu.", NamedTextColor.RED).decorate(TextDecoration.BOLD));
+
+                    // Beri tahu jika ada rekan kubu jahat yang offline
+                    registeredPlayers.stream()
+                        .map(Bukkit::getPlayerExact).filter(Objects::nonNull)
+                        .filter(o -> getRole(o) != null && getRole(o).isEvil()
+                                  && getRole(o) != Role.OBERON
+                                  && !o.isOnline()
+                                  && !o.getName().equals(p.getName()))
+                        .forEach(o -> p.sendMessage(
+                            Component.text("  ⚠ " + o.getName() + " (" + getRole(o).name() + ") sedang offline.", NamedTextColor.GRAY)
+                                .decorate(TextDecoration.ITALIC)
+                        ));
+
                     p.sendMessage(Component.text(" "));
                 }
 
@@ -934,15 +1088,23 @@ public class GameManager {
 
             // ── Phase 4: Selesai ──────────────────────────────────────────
             case 4 -> {
-                for (Player p : players) {
+                for (String name : registeredPlayers) {
+
+                    Player p = Bukkit.getPlayerExact(name);
+
+                    if (p == null || !p.isOnline()) {
+                        continue;
+                    }
+
                     float yaw = yawTowardBase(
                         p.getLocation().getX(),
                         p.getLocation().getZ()
                     );
-                    if (!p.isOnline()) continue;
+
                     if (p.getAttribute(Attribute.SCALE) != null) {
                         p.getAttribute(Attribute.SCALE).setBaseValue(1.0);
                     }
+
                     clearRevealEffects(p);
                     unlockCamera(p);
                     unlockMovement(p);
@@ -962,6 +1124,7 @@ public class GameManager {
                         @Override
                         public void run() {
                             if (!gameRunning) return;
+                            currentRevealPhase = -1;
                             startKingReveal(players);
                         }
                     }.runTaskLater(plugin, 100L) // 100 ticks = 5 detik
@@ -969,15 +1132,98 @@ public class GameManager {
             }
         }
     }
+    private void restoreRevealState(Player player) {
+
+        if (currentRevealPhase == -1) {
+            return;
+        } 
+
+        if (player.getVehicle() == null) {
+            reseatPlayer(player, player.getWorld());
+        }
+
+        Role role = getRole(player);
+
+        switch (currentRevealPhase) {
+
+            case 0 -> {
+                sitAndBlind(player);
+            }
+
+            case 1 -> {
+
+                if (role == Role.MERLIN) {
+                    standAsViewer(player);
+                }
+                else if (role != null
+                        && role.isEvil()
+                        && role != Role.MORDRED) {
+                    standAsTarget(player);
+                }
+                else {
+                    sitAndBlind(player);
+                }
+
+            }
+
+            case 2 -> {
+
+                if (role == Role.PERCIVAL) {
+                    standAsViewer(player);
+                }
+                else if (role == Role.MERLIN
+                        || role == Role.MORGANA) {
+                    standAsTarget(player);
+                }
+                else {
+                    sitAndBlind(player);
+                }
+
+            }
+
+            case 3 -> {
+
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+
+                    if (!player.isOnline()) {
+                        return;
+                    }
+
+                    if (role != null
+                            && role.isEvil()
+                            && role != Role.OBERON) {
+
+                        standAsViewer(player);
+
+                    } else {
+
+                        sitAndBlind(player);
+
+                    }
+
+                }, 2L);
+
+            }
+
+        }
+
+        if (currentRevealSeconds >= 0) {
+            player.sendActionBar(
+                Component.text(currentRevealLabel + " — " + currentRevealSeconds + "s",
+                    NamedTextColor.YELLOW)
+            );
+        }
+
+    }
 
     // ── Helpers role reveal ──────────────────────────────────────────────────
 
     private boolean hasRole(List<Player> players, Role role) {
-        return players.stream().anyMatch(p -> getRole(p) == role);
+        return registeredPlayers.stream().map(Bukkit::getPlayerExact).filter(Objects::nonNull).anyMatch(p -> getRole(p) == role);
     }
 
     private Player getPlayerWithRole(List<Player> players, Role role) {
-        return players.stream().filter(p -> getRole(p) == role).findFirst().orElse(null);
+        return registeredPlayers.stream().map(Bukkit::getPlayerExact).filter(Objects::nonNull).filter(p -> getRole(p) == role).findFirst().orElse(null);
     }
 
     // ===== KING REVEAL =====
@@ -1000,8 +1246,11 @@ public class GameManager {
         }
 
         List<String> sorted = new ArrayList<>();
-        for (Player p : players) sorted.add(p.getName());
-
+        for (String name : registeredPlayers) {
+            Player p = Bukkit.getPlayerExact(name);
+            if (p == null || !p.isOnline()) continue;
+            sorted.add(p.getName());
+        }
         sorted.sort((a, b) -> {
             int idxA = seatIndex.getOrDefault(a, 0);
             int idxB = seatIndex.getOrDefault(b, 0);
@@ -1015,17 +1264,17 @@ public class GameManager {
         });
 
         // Pilih Raja pertama secara acak
-        // int randomStart = (int) (Math.random() * sorted.size());
+        int randomStart = (int) (Math.random() * sorted.size());
         // DEBUG — (KODE ASLI JANGAN DIHAPUS!)
-        int randomStart = sorted.indexOf("itslyricss");
+        // int randomStart = sorted.indexOf("itslyricss");
         for (int i = 0; i < sorted.size(); i++) {
             kingOrder.add(sorted.get((randomStart + i) % sorted.size()));
         }
 
         currentKingIndex = 0;
-        // String kingName = kingOrder.get(0);
+        String kingName = kingOrder.get(0);
         // DEBUG - (KODE ASLI JANGAN DIHAPUS!)
-        String kingName = "itslyricss";
+        // String kingName = "itslyricss";
 
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GOLD));
@@ -1043,8 +1292,9 @@ public class GameManager {
                 if (ticks >= 40) {
                     cancel();
 
-                    for (Player p : players) {
-                        if (!p.isOnline()) continue;
+                    for (String name : registeredPlayers) {
+                        Player p = Bukkit.getPlayerExact(name);
+                        if (p == null || !p.isOnline()) continue;
 
                         boolean isKingPlayer = p.getName().equals(kingName);
 
@@ -1094,8 +1344,9 @@ public class GameManager {
                 }
 
                 String rnd = kingOrder.get((int) (Math.random() * kingOrder.size()));
-                for (Player p : players) {
-                    if (!p.isOnline()) continue;
+                for (String name : registeredPlayers) {
+                    Player p = Bukkit.getPlayerExact(name);
+                    if (p == null || !p.isOnline()) continue;
                     p.sendTitle("§6Mengocok Raja...", "§f" + rnd, 0, 10, 0);
                     p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
                 }
@@ -1198,7 +1449,15 @@ public class GameManager {
         world.spawn(
             new Location(world, MANNEQUIN_X, MANNEQUIN_Y, MANNEQUIN_Z, MANNEQUIN_YAW, 0f),
             Mannequin.class, m -> {
-                m.setProfile(ResolvableProfile.resolvableProfile().name("fredganteng").build());
+
+                ResolvableProfile.Builder builder = ResolvableProfile.resolvableProfile();
+
+                builder.addProperty(new ProfileProperty(
+                    "textures",
+                    "ewogICJ0aW1lc3RhbXAiIDogMTcyNzQ2MzM1MDM4MiwKICAicHJvZmlsZUlkIiA6ICJhNDAxZjEzMTZlMjI0ZTNjOTg0ODk1MmVjMzhjMTEwYyIsCiAgInByb2ZpbGVOYW1lIiA6ICJHcmVlbnNoZWVwaXJhdGUiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzVjNWQxOWFhMTQzYThiMTgzMGVlZWE3ODcxM2NhNDI4NTJhMmQ1NjUwYzI0ZjMzZmU3ZTk4YzdhZGUxZjk0NSIKICAgIH0KICB9Cn0="
+                ));
+
+                m.setProfile(builder.build());
                 m.setImmovable(true); m.setInvulnerable(true); m.setGravity(false);
                 m.setAI(false); m.setPersistent(true); m.setPose(Pose.SLEEPING, true);
                 m.setCustomNameVisible(false); m.setDescription(null);
@@ -1227,7 +1486,7 @@ public class GameManager {
             lockMovement(p);
         }
         Component[] lines = {
-            Component.text("Sudah satu bulan lamanya pak fred tidak sadarkan diri", NamedTextColor.YELLOW),
+            Component.text("Sudah satu bulan lamanya ratu amaryn tidak sadarkan diri", NamedTextColor.YELLOW),
             Component.text("Konon katanya ada satu ramuan yang dapat menyembuhkannya", NamedTextColor.YELLOW),
             Component.text("Ramuan yang dibuat dengan 3 tanaman langka", NamedTextColor.YELLOW),
             Component.text("Pitcher plant, Torch flower, Spore Blossom", Style.style(NamedTextColor.GOLD, TextDecoration.ITALIC)),
@@ -1454,6 +1713,7 @@ public class GameManager {
             } else {
                 // ── Player terpilih → Adventure + Slowness 1 + Shears ────────
                 unseatPlayer(p);
+                playerStateMap.put(p.getUniqueId(), OfflineState.FREE);
                 p.setGameMode(GameMode.SURVIVAL);
 
                 // Slowness 1 (amplifier=0 = level 1), tanpa efek/ikon
@@ -1536,7 +1796,13 @@ public class GameManager {
     private void unseatPlayer(Player p) {
         revealPhaseActive = true;
         Entity vehicle = p.getVehicle();
-        if (vehicle != null) vehicle.eject();
+        if (vehicle != null) {
+            vehicle.eject();
+
+            if (vehicle.getScoreboardTags().contains("avalon_seat")) {
+                vehicle.remove();
+            }
+        }
         revealPhaseActive = false;
 
         clearRevealEffects(p);
@@ -1935,9 +2201,9 @@ public class GameManager {
 
         Location cameraLoc = new Location(
             world,
-            5.8,
-            75,
-            -377.5,
+            BASE_X - 1.2,
+            BASE_Y + 1,
+            BASE_Z + 1.5,
             -115f,
             51f
         );
@@ -1963,9 +2229,9 @@ public class GameManager {
         ArmorStand stand = world.spawn(
             new Location(
                 world,
-                8.5,
-                75,
-                -378.5,
+                BASE_X + 1.5,
+                BASE_Y + 1,
+                BASE_Z + 0.5,
                 65f,
                 0f
             ),
@@ -1993,7 +2259,7 @@ public class GameManager {
 
         new BukkitRunnable() {
 
-            double y = 76.0;
+            double y = BASE_Y + 2;
 
             @Override
             public void run() {
@@ -2011,7 +2277,7 @@ public class GameManager {
 
                 stand.teleport(l);
 
-                if (y <= 73.0) {
+                if (y <= BASE_Y - 1.5) {
 
                     cancel();
 
@@ -2206,7 +2472,7 @@ public class GameManager {
         startDiscussionHeadAnimation();
 
         discussionTask = new BukkitRunnable() {
-            int seconds = DISCUSSION_SECONDS;
+            int seconds = discussionSeconds;
 
             @Override
             public void run() {
@@ -2335,7 +2601,7 @@ public class GameManager {
     }
 
     /** Beri item skip kepala ke player. */
-    private void giveDiscussionSkipItem(Player player) {
+    public void giveDiscussionSkipItem(Player player) {
         ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
         org.bukkit.inventory.meta.SkullMeta meta =
             (org.bukkit.inventory.meta.SkullMeta) skull.getItemMeta();
@@ -2424,6 +2690,19 @@ public class GameManager {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
 
         if (skipCount >= totalOnline) {
+            stopDiscussionPhase();
+            endDiscussion(discussionAfterSuccess);
+        }
+    }
+
+    private void checkDiscussionSkipComplete() {
+        if (!discussionActive) return;
+
+        int totalOnline = getOnlinePlayers().size();
+
+        if (totalOnline > 0
+                && discussionSkipVotes.size() >= totalOnline) {
+
             stopDiscussionPhase();
             endDiscussion(discussionAfterSuccess);
         }
@@ -2539,6 +2818,7 @@ public class GameManager {
                     revealPhaseActive = false;
                 }
                 unlockMovement(p);
+                playerStateMap.put(p.getUniqueId(), OfflineState.FREE);
                 // Beri item skip
                 giveAssassinationSkipItem(p);
 
@@ -2571,7 +2851,7 @@ public class GameManager {
 
         // Timer 10 menit
         assassinationTask = new BukkitRunnable() {
-            int seconds = ASSASSINATION_SECONDS;
+            int seconds = evilDiscussionSeconds;
 
             @Override
             public void run() {
@@ -2614,7 +2894,7 @@ public class GameManager {
     }
 
     /** Beri item skip assassination kepada player kubu jahat. */
-    private void giveAssassinationSkipItem(Player player) {
+    public void giveAssassinationSkipItem(Player player) {
         ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
         org.bukkit.inventory.meta.SkullMeta meta =
             (org.bukkit.inventory.meta.SkullMeta) skull.getItemMeta();
@@ -2800,6 +3080,24 @@ public class GameManager {
         }
     }
 
+    private void checkAssassinationSkipComplete() {
+        if (!assassinationActive) return;
+
+        long evilOnline = getOnlinePlayers().stream()
+            .filter(p -> {
+                Role r = playerRoles.get(p.getUniqueId());
+                return r != null && r.isEvil();
+            })
+            .count();
+
+        if (evilOnline > 0
+                && assassinationSkipVotes.size() >= evilOnline) {
+
+            stopAssassinationPhase();
+            endAssassinationDiscussion();
+        }
+    }
+
     /** Timer habis / semua kubu jahat skip → kasih bow ke assassin. */
     private void endAssassinationDiscussion() {
         if (!gameRunning) return;
@@ -2817,7 +3115,8 @@ public class GameManager {
     }
 
     /** Berikan bow 1-durability + arrow ke player dengan role ASSASSIN. */
-    private void giveAssassinBow() {
+    public void giveAssassinBow() {
+        assassinBowActive = true;
         for (Player p : getOnlinePlayers()) {
             Role role = playerRoles.get(p.getUniqueId());
             if (role != Role.ASSASSIN) continue;
@@ -3062,7 +3361,7 @@ public class GameManager {
         broadcast(Component.text(" "));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
         broadcast(Component.text("  🏆 KUBU BAIK MENANG!", NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
-        broadcast(Component.text("  Merlin berhasil menyembuhkan pak fred!", NamedTextColor.GREEN));
+        broadcast(Component.text("  Merlin berhasil menyembuhkan ratu amaryn!", NamedTextColor.GREEN));
         broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.AQUA));
         broadcast(Component.text(" "));
 
@@ -3163,6 +3462,498 @@ public class GameManager {
         return Bukkit.getWorlds().get(0);
     }
 
+    // =========================================================================
+    // ===== OFFLINE PLAYER HANDLING ===========================================
+    // =========================================================================
+
+    /**
+     * Dipanggil oleh PlayerOfflineHandler saat registered player disconnect.
+     * Spawn mannequin, broadcast, lalu jalankan logika khusus per fase.
+     */
+    public void handlePlayerOffline(Player player) {
+        if (!gameRunning) return;
+        String name = player.getName();
+
+        offlinePlayerRefs.put(
+            player.getName(),
+            new OfflineMannequinData(
+                player.getUniqueId(),
+                player.getName(),
+                player.getPlayerProfile(),
+                player.getWorld(),
+                player.getLocation()
+            )
+        );
+
+        // 1. Spawn mannequin di posisi terakhir
+        Location loc = player.getLocation().clone();
+
+        if (detectOfflineState(player) == OfflineState.SEATED && player.getVehicle() != null) {
+            loc = player.getVehicle().getLocation().clone();
+        }
+        OfflineState state = detectOfflineState(player);
+
+        OfflineMannequinData data = new OfflineMannequinData(
+            player.getUniqueId(),
+            player.getName(),
+            player.getPlayerProfile(),
+            player.getWorld(),
+            loc
+        );
+
+        offlinePlayerRefs.put(player.getName(), data);
+
+        spawnOfflineMannequin(data, state);
+
+        // 2. Broadcast
+        broadcast(
+            Component.text("  ⚠ ", NamedTextColor.YELLOW)
+                .append(Component.text(name, NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
+                .append(Component.text(" terputus dari server.", NamedTextColor.YELLOW))
+        );
+
+        // 3. Fase misi — cek apakah seluruh tim offline
+        if (missionActive) {
+            checkAllMissionTeamOffline();
+            return;
+        }
+
+        // 4. Fase voting — cek apakah semua yang online sudah vote
+        if (votingManager != null && votingManager.isVotingActive()) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                votingManager.checkIfComplete();
+            });
+            return;
+        }
+
+        if (discussionActive) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                checkDiscussionSkipComplete();
+            });
+            return;
+        }
+
+        if (assassinationActive) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                checkAssassinationSkipComplete();
+            });
+            return;
+        }
+
+        // 5. Fase bow assassin — jika assassin offline → grace timer
+        if (assassinBowActive) {
+            Role role = playerRoles.get(player.getUniqueId());
+            if (role == Role.ASSASSIN && assassinOfflineGraceTask == null) {
+                broadcast(
+                    Component.text("  ☠ Assassin offline! Kubu Baik menang dalam " + OFFLINE_GRACE_SECONDS + " detik jika tidak kembali.", NamedTextColor.RED)
+                );
+                scheduleAssassinOfflineGrace();
+            }
+            return;
+        }
+
+        // 6. Fase pemilihan tim (raja) — jika raja offline → grace timer
+        if (!votingManager.isVotingActive() && !missionActive && !discussionActive && !assassinationActive) {
+            String kingName = getCurrentKingName();
+            if (name.equals(kingName) && kingOfflineGraceTask == null) {
+                broadcast(
+                    Component.text("  👑 Raja offline! Raja berikutnya dipilih dalam " + OFFLINE_GRACE_SECONDS + " detik jika tidak kembali.", NamedTextColor.YELLOW)
+                );
+                scheduleKingOfflineGrace(name);
+            }
+        }
+    }
+
+    /**
+     * Dipanggil oleh PlayerOfflineHandler saat registered player reconnect.
+     * Hapus mannequin, cancel grace timer, bersihkan inventory lama, restore
+     * pose + item sesuai fase yang sedang aktif.
+     */
+    public void handlePlayerOnline(Player player) {
+        if (!gameRunning) return;
+        String name = player.getName();
+
+        offlinePlayerRefs.remove(player.getName());
+
+        // 1. Hapus mannequin
+        removeOfflineMannequin(name);
+
+        // 2. Broadcast
+        broadcast(
+            Component.text("  ✅ ", NamedTextColor.GREEN)
+                .append(Component.text(name, NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
+                .append(Component.text(" kembali ke server.", NamedTextColor.GREEN))
+        );
+
+        // 3. Kirim ulang info role
+        Role role = playerRoles.get(player.getUniqueId());
+        if (role != null) {
+            player.sendMessage(Component.text(" "));
+            player.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
+            for (Component line : getRoleDescription(role)) player.sendMessage(line);
+            player.sendMessage(Component.text("══════════════════════", NamedTextColor.GOLD));
+        }
+
+        // 4. Cancel grace timer jika pemain yang bersangkutan kembali
+        String kingName = getCurrentKingName();
+        if (name.equals(kingName) && kingOfflineGraceTask != null) {
+            cancelKingOfflineGrace();
+            broadcast(Component.text("  👑 Raja " + name + " kembali. Pemilihan tim dilanjutkan.", NamedTextColor.GOLD));
+        }
+        if (role == Role.ASSASSIN && assassinBowActive && assassinOfflineGraceTask != null) {
+            cancelAssassinOfflineGrace();
+        }
+
+        // 5. Bersihkan sisa inventory dari fase sebelumnya
+        player.getInventory().clear();
+
+        // 6. Reset scale ke 1.0 (bisa saja bawa scale 1.5 dari fase sebelumnya)
+        AttributeInstance scaleAttr = player.getAttribute(Attribute.SCALE);
+        if (scaleAttr != null) scaleAttr.setBaseValue(1.0);
+
+        World world = player.getWorld();
+
+        // ── Fase misi (anggota tim) ──────────────────────────────────────────
+        if (missionActive && currentMissionTeam.contains(name)) {
+            player.setGameMode(GameMode.SURVIVAL);
+            ItemStack shears = makeShears(player);
+            player.getInventory().setItem(0, shears);
+            player.getInventory().setHeldItemSlot(0);
+            player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,
+                Integer.MAX_VALUE, 0, false, false, false));
+            player.sendMessage(
+                Component.text("  🌿 Kamu kembali ke misi! Lanjutkan mengumpulkan tanaman.", NamedTextColor.GREEN)
+            );
+            return;
+        }
+
+        // ── Fase voting ──────────────────────────────────────────────────────
+        if (votingManager != null && votingManager.isVotingActive()) {
+            reseatPlayer(player, world);
+            votingManager.giveVoteItemsPublic(player);
+            player.sendMessage(
+                Component.text("  🗳 Voting sedang berlangsung. Gunakan item di hotbar untuk memberikan suara.", NamedTextColor.AQUA)
+            );
+            return;
+        }
+
+        // ── Fase bow assassin ────────────────────────────────────────────────
+        if (assassinBowActive && role == Role.ASSASSIN) {
+            // Assassin tidak duduk di fase bow — tetap berdiri sebagai viewer
+            standAsViewer(player);
+            giveAssassinBow();
+            return;
+        }
+
+        // ── Fase diskusi assassination ───────────────────────────────────────
+        if (assassinationActive) {
+            if (role != null && role.isEvil()) {
+                // Kubu jahat berdiri sebagai viewer saat assassination discussion
+                standAsViewer(player);
+                giveAssassinationSkipItem(player);
+                player.sendMessage(
+                    Component.text("  ☠ Kubu jahat sedang berdiskusi. Gunakan item untuk vote skip.", NamedTextColor.RED)
+                );
+            } else {
+                // Kubu baik: duduk kembali, gerakan dikunci
+                reseatPlayer(player, world);
+                lockMovement(player);
+            }
+            return;
+        }
+
+        // ── Fase diskusi biasa ───────────────────────────────────────────────
+        if (discussionActive) {
+            reseatPlayer(player, world);
+            if (!discussionSkipVotes.contains(player.getUniqueId())) {
+                giveDiscussionSkipItem(player);
+            }
+            player.sendMessage(
+                Component.text("  💬 Diskusi sedang berlangsung. Gunakan item untuk vote skip.", NamedTextColor.YELLOW)
+            );
+            return;
+        }
+
+        // ── Fase pemilihan tim ───────────────────────────────────────────────
+        if (currentRevealPhase == -1) {
+            unlockMovement(player);
+            unlockCamera(player);
+            clearRevealEffects(player);
+
+            AttributeInstance scale = player.getAttribute(Attribute.SCALE);
+            if (scale != null) {
+                scale.setBaseValue(1.0);
+            }
+        }
+        if (currentRevealPhase != -1) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                restoreRevealState(player);
+            }, 2L);
+            return;
+        }
+        reseatPlayer(player, world);
+        if (name.equals(kingName)) {
+            removeTeamBook(player);
+            giveTeamBook(player);
+            player.sendMessage(
+                Component.text("  👑 Kamu adalah Raja. Gunakan Buku Pemilihan Tim untuk memilih tim.", NamedTextColor.GOLD)
+            );
+        }
+    }
+
+    // ── Mannequin ─────────────────────────────────────────────────────────────
+
+    /** Seat ArmorStand palsu untuk mannequin yang sedang duduk. */
+    private final Map<String, Entity> offlineMannequinSeats = new HashMap<>();
+
+    /** State visual player saat disconnect. */
+    private enum OfflineState { SEATED, VIEWER, TARGET, FREE }
+
+    private static class OfflineMannequinData {
+        final UUID uuid;
+        final String name;
+        final com.destroystokyo.paper.profile.PlayerProfile profile;
+        final World world;
+        Location location;
+
+        OfflineMannequinData(
+                UUID uuid,
+                String name,
+                com.destroystokyo.paper.profile.PlayerProfile profile,
+                World world,
+                Location location) {
+
+            this.uuid = uuid;
+            this.name = name;
+            this.profile = profile;
+            this.world = world;
+            this.location = location.clone();
+        }
+    }
+
+    /**
+     * Deteksi state visual player berdasarkan playerStateMap yang diupdate
+     * di setiap transisi fase (standAsViewer, standAsTarget, reseatPlayer, dll).
+     * Jauh lebih reliable dari pitch/vehicle karena tidak bergantung pada
+     * server-side player location yang bisa out-of-sync dengan lockCamera.
+     */
+    private OfflineState detectOfflineState(Player player) {
+        OfflineState mapped = playerStateMap.get(player.getUniqueId());
+        if (mapped != null) return mapped;
+
+        // Fallback jika playerStateMap belum diset (misal disconnect sangat awal)
+        if (player.getVehicle() instanceof ArmorStand) return OfflineState.SEATED;
+        AttributeInstance scaleAttr = player.getAttribute(Attribute.SCALE);
+        boolean isScaled = scaleAttr != null && Math.abs(scaleAttr.getBaseValue() - 1.5) < 0.05;
+        return isScaled ? OfflineState.VIEWER : OfflineState.FREE;
+    }
+
+    /**
+     * Spawn mannequin dengan pose dan skala yang cocok dengan state player saat disconnect:
+     *
+     *  SEATED  → mannequin riding ArmorStand palsu di posisi kursi (tampak duduk)
+     *  VIEWER  → scale 1.5, menghadap base (yaw ke base, pitch 0)
+     *  TARGET  → scale 1.5, menghadap bawah (yaw ke base, pitch 90)
+     *  FREE    → scale 1.0, posisi & rotasi persis seperti player
+    */
+    private void spawnOfflineMannequin(OfflineMannequinData data, OfflineState state) {
+
+        removeOfflineMannequin(data.name);
+
+        World world = data.world;
+        Location spawnLoc = data.location.clone();
+        spawnLoc.setYaw(yawTowardBase(spawnLoc.getX(), spawnLoc.getZ()));
+        spawnLoc.setPitch(0f);
+
+        try {
+            com.destroystokyo.paper.profile.PlayerProfile pp = data.profile;
+
+            // Spawn ArmorStand tak terlihat dulu sebagai "kursi"
+            ArmorStand seat = world.spawn(spawnLoc, ArmorStand.class, as -> {
+                as.setVisible(false);
+                as.setGravity(false);
+                as.setInvulnerable(true);
+                as.setMarker(true);
+                as.setCustomNameVisible(false);
+                as.setPersistent(false);
+                as.addScoreboardTag("avalon_mannequin");
+            });
+
+            Mannequin mannequin = world.spawn(spawnLoc, Mannequin.class, entity -> {
+
+                var builder = ResolvableProfile.resolvableProfile()
+                        .name(data.name)
+                        .uuid(data.uuid);
+                for (com.destroystokyo.paper.profile.ProfileProperty prop : pp.getProperties()) {
+                    builder.addProperty(prop);
+                }
+                entity.setProfile(builder.build());
+
+                entity.setImmovable(true);
+                entity.setInvulnerable(true);
+                entity.setGravity(false);
+                entity.setAI(false);
+                entity.setPersistent(false);
+                entity.setSilent(true);
+                entity.customName(
+                    Component.text("Bot ", NamedTextColor.GRAY)
+                        .append(Component.text(data.name, NamedTextColor.WHITE))
+                );
+                entity.setCustomNameVisible(true);
+                entity.addScoreboardTag("avalon_mannequin");
+            });
+
+            // Dudukkan mannequin di atas ArmorStand → pose duduk otomatis
+            seat.addPassenger(mannequin);
+
+            offlineMannequinSeats.put(data.name, seat);
+            offlineMannequins.put(data.name, mannequin);
+
+        } catch (Exception e) {
+            plugin.getLogger().warning(
+                    "[Avalon] Gagal spawn mannequin untuk "
+                            + data.name + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Hapus mannequin (+ fake seat jika ada) milik player yang reconnect.
+     */
+    private void removeOfflineMannequin(String playerName) {
+            Entity seat = offlineMannequinSeats.remove(playerName);
+            if (seat != null && !seat.isDead()) seat.remove();
+
+            Entity mannequin = offlineMannequins.remove(playerName);
+            if (mannequin != null && !mannequin.isDead()) mannequin.remove();
+        }
+    private void updateOfflineMannequin(String playerName, OfflineState state) {
+
+        if (Bukkit.getPlayerExact(playerName) != null) {
+            return;
+        }
+
+        OfflineMannequinData data = offlinePlayerRefs.get(playerName);
+
+        if (data == null) {
+            return;
+        }
+
+        Entity mannequin = offlineMannequins.get(playerName);
+        if (mannequin != null) {
+            data.location = mannequin.getLocation().clone();
+        }
+        removeOfflineMannequin(playerName);
+        spawnOfflineMannequin(data, state);
+    }
+
+    // ── Grace timers ──────────────────────────────────────────────────────────
+
+    /**
+     * Jadwalkan auto-rotasi raja setelah grace period jika raja masih offline.
+     */
+    private void scheduleKingOfflineGrace(String kingName) {
+        if (kingOfflineGraceTask != null) return;
+        kingOfflineGraceTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                kingOfflineGraceTask = null;
+                if (!gameRunning) return;
+                Player king = Bukkit.getPlayerExact(kingName);
+                if (king == null || !king.isOnline()) {
+                    broadcast(
+                        Component.text("  👑 Raja " + kingName + " tidak kembali. Rotasi raja otomatis.", NamedTextColor.YELLOW)
+                    );
+                    rotateKing();
+                }
+            }
+        }.runTaskLater(plugin, OFFLINE_GRACE_SECONDS * 20L);
+    }
+
+    private void cancelKingOfflineGrace() {
+        if (kingOfflineGraceTask != null) {
+            kingOfflineGraceTask.cancel();
+            kingOfflineGraceTask = null;
+        }
+    }
+
+    /**
+     * Jadwalkan kemenangan kubu baik secara default jika assassin tidak kembali.
+     */
+    private void scheduleAssassinOfflineGrace() {
+        if (assassinOfflineGraceTask != null) return;
+        assassinOfflineGraceTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                assassinOfflineGraceTask = null;
+                if (!gameRunning) return;
+                // Cek apakah assassin masih offline
+                boolean assassinOnline = getOnlinePlayers().stream()
+                    .anyMatch(p -> playerRoles.get(p.getUniqueId()) == Role.ASSASSIN);
+                if (!assassinOnline) {
+                    broadcast(
+                        Component.text("  ☠ Assassin tidak kembali. Kubu Baik menang secara default!", NamedTextColor.GREEN)
+                    );
+                    triggerGoodWin();
+                }
+            }
+        }.runTaskLater(plugin, OFFLINE_GRACE_SECONDS * 20L);
+    }
+
+    private void cancelAssassinOfflineGrace() {
+        if (assassinOfflineGraceTask != null) {
+            assassinOfflineGraceTask.cancel();
+            assassinOfflineGraceTask = null;
+        }
+    }
+
+    // ── Mission: semua tim offline ────────────────────────────────────────────
+
+    /**
+     * Jika seluruh anggota tim misi offline → batalkan misi, rotasi raja.
+     */
+    private void checkAllMissionTeamOffline() {
+        if (!missionActive) return;
+        for (String name : currentMissionTeam) {
+            Player p = Bukkit.getPlayerExact(name);
+            if (p != null && p.isOnline()) return; // masih ada yang online
+        }
+
+        // Semua offline → batalkan misi
+        broadcast(Component.text(" "));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.RED));
+        broadcast(
+            Component.text("  ⚠ Semua anggota tim offline! Misi dibatalkan.", NamedTextColor.RED)
+                .decorate(TextDecoration.BOLD)
+        );
+        broadcast(Component.text("  Raja berikutnya akan memilih tim baru.", NamedTextColor.GRAY));
+        broadcast(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.RED));
+        broadcast(Component.text(" "));
+
+        missionActive = false;
+        stopHotbarLock();
+        stopSabotageMechanic();
+        stopProximityChecker();
+        
+
+        for (Player p : getOnlinePlayers()) p.removePotionEffect(PotionEffectType.SLOWNESS);
+        for (Player p : getOnlinePlayers()) p.setGameMode(GameMode.ADVENTURE);
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!gameRunning) return;
+                teleportAllToSeat();
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        if (!gameRunning) return;
+                        rotateKing();
+                    }
+                }.runTaskLater(plugin, 40L);
+            }
+        }.runTaskLater(plugin, 60L);
+    }
+
     public void cleanup() {
         AvalonPlugin.getInstance()
                 .getTeamSelectionListener()
@@ -3173,7 +3964,7 @@ public class GameManager {
         if (revealCountdownTask != null)        { revealCountdownTask.cancel();        revealCountdownTask = null; }
         if (teamSelectionActionBarTask != null) { teamSelectionActionBarTask.cancel(); teamSelectionActionBarTask = null; }
         if (endMissionCountdownTask != null)    { endMissionCountdownTask.cancel();    endMissionCountdownTask = null; }
-
+        
         stopDiscussionPhase();
         stopHotbarLock();
         stopSabotageMechanic();
@@ -3202,7 +3993,19 @@ public class GameManager {
         removeDiscussionSkipItems();
         assassinationActive = false;
         assassinShotFired = false;
+        assassinBowActive = false;
         assassinationSkipVotes.clear();
+
+        // Cancel grace timers offline
+        cancelKingOfflineGrace();
+        cancelAssassinOfflineGrace();
+        // Hapus semua mannequin offline
+        for (Entity e : offlineMannequins.values()) {
+            if (e != null && !e.isDead()) e.remove();
+        }
+        offlineMannequins.clear();
+        offlineMannequinSeats.clear();
+        playerStateMap.clear();
 
         for (BukkitTask task : delayedTasks) {
             task.cancel();
@@ -3259,7 +4062,7 @@ public class GameManager {
             for (int[] pos : PLAYER_SLAB_POSITIONS)
                 gameWorld.getBlockAt(BASE_X + pos[0], BASE_Y, BASE_Z + pos[1]).setType(Material.AIR);
             gameWorld.getBlockAt(BASE_X, BASE_Y, BASE_Z).setType(Material.AIR);
-            gameWorld.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z).setType(Material.ORANGE_TERRACOTTA);
+            gameWorld.getBlockAt(BASE_X, BASE_Y - 1, BASE_Z).setType(Material.CHISELED_STONE_BRICKS);
             clearAllMissionPlants(gameWorld);
         }
     }

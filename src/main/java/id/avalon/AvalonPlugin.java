@@ -4,9 +4,11 @@ package id.avalon;
 // import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import id.avalon.commands.*;
 import id.avalon.listeners.AssassinationListener;
+import id.avalon.listeners.CommandBlockListener;
 import id.avalon.listeners.CustomRoleListener;
 import id.avalon.listeners.CutsceneListener;
 import id.avalon.listeners.MissionListener;
+import id.avalon.listeners.PlayerOfflineHandler;
 import id.avalon.listeners.TeamSelectionListener;
 import id.avalon.listeners.VotingListener;
 import id.avalon.listeners.PvPProtectionListener;
@@ -44,6 +46,10 @@ public class AvalonPlugin extends JavaPlugin {
                 teamSelectionListener,
                 this
         );
+        getServer().getPluginManager().registerEvents(
+            new CommandBlockListener(gameManager),
+            this
+        );
         Bukkit.getPluginManager().registerEvents(
             new CutsceneListener(gameManager),
             this
@@ -72,7 +78,10 @@ public class AvalonPlugin extends JavaPlugin {
             new PvPProtectionListener(gameManager),
             this
         );
-
+        Bukkit.getPluginManager().registerEvents(
+            new PlayerOfflineHandler(gameManager),
+            this
+        );
         getCommand("regis").setExecutor(new RegisCommand(gameManager));
         getCommand("unregis").setExecutor(new UnregisCommand(gameManager));
         getCommand("listplayer").setExecutor(new ListPlayerCommand(gameManager));
@@ -83,6 +92,9 @@ public class AvalonPlugin extends JavaPlugin {
         getCommand("startgame").setExecutor(new StartGameCommand(gameManager));
         getCommand("debugroles").setExecutor(new DebugRolesCommand(gameManager));
         getCommand("stopgame").setExecutor(new StopGameCommand(gameManager));
+        getCommand("settimer").setExecutor(new SetTimerCommand(gameManager));
+        getCommand("settimer").setTabCompleter(new SetTimerCommand(gameManager));
+
         
 
         getLogger().info("Avalon plugin enabled!");

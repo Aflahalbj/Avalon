@@ -44,7 +44,6 @@ public class VotingManager {
     public static final String VOTE_SETUJU        = "setuju";
     public static final String VOTE_TOLAK         = "tolak";
     // DEBUG
-    private static final int VOTING_SECONDS      = 10; // 10 menit
     private static final int MAX_REJECT_STREAK   = 5;   // Rule 1
 
     private final AvalonPlugin plugin;
@@ -64,7 +63,7 @@ public class VotingManager {
 
     private BukkitTask countdownTask;
     private BukkitTask animationTask;
-    private int secondsLeft = VOTING_SECONDS;
+    private int secondsLeft;
 
     // ── Rule 1: Reject Streak ─────────────────────────────────────────────────
     /** Berapa kali berturut-turut tim ditolak dalam ronde saat ini. */
@@ -93,7 +92,7 @@ public class VotingManager {
         votes.clear();
         voteHeads.clear();
         headBaseLocations.clear();
-        secondsLeft = VOTING_SECONDS;
+        secondsLeft = gameManager.getVotingSeconds();
 
         List<Player> allPlayers = getRegisteredOnlinePlayers();
 
@@ -191,6 +190,26 @@ public class VotingManager {
         votes.clear();
         currentTeam.clear();
         rejectStreak = 0;
+    }
+
+    /**
+     * Cek ulang apakah semua player online sudah vote.
+     * Dipanggil saat ada player disconnect agar voting tidak hang.
+     */
+    public void checkIfComplete() {
+        if (!votingActive) return;
+        int totalOnline = getRegisteredOnlinePlayers().size();
+        if (totalOnline == 0) return; // jangan finish jika tidak ada yang online
+        if (votes.size() >= totalOnline) {
+            finishVoting();
+        }
+    }
+
+    /**
+     * Berikan item voting ke player tertentu (untuk restore saat reconnect).
+     */
+    public void giveVoteItemsPublic(Player player) {
+        giveVoteItems(player);
     }
 
     // ── Countdown ────────────────────────────────────────────────────────────

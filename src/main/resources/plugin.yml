@@ -40,6 +40,10 @@ commands:
     description: Hentikan game tanpa unregister player
     usage: /stopgame
     permission: avalon.admin
+  settimer:
+    description: Set timer
+    usage: /settimer <type> <seconds>
+    permission: avalon.admin
 
 permissions:
   avalon.admin:

@@ -325,9 +325,9 @@ public class TeamSelectionListener implements Listener {
 
         Location base = new Location(
                 world,
-                7.5,
-                74,
-                -378.5
+                gameManager.BASE_X + 0.5,
+                gameManager.BASE_Y,
+                gameManager.BASE_Z - 0.5
         );
 
         Vector forward = base.toVector()
